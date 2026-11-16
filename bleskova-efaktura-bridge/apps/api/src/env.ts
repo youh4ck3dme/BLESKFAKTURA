@@ -8,6 +8,7 @@ export interface BootConfig {
   seed: boolean;
   store: "sqlite" | "memory";
   port: number;
+  host: string;
   emulatorSecret: string;
   webhookSecret: string;
   dataDir: string;
@@ -47,6 +48,7 @@ export function readBootConfig(moduleRoot: string, source: NodeJS.ProcessEnv = p
     seed,
     store,
     port: Number(source.EFAKTURA_PORT ?? "8088"),
+    host: readHost(source),
     emulatorSecret: source.EFAKTURA_EMULATOR_SECRET || "local-only-not-a-production-secret",
     webhookSecret: source.EFAKTURA_SANDBOX_WEBHOOK_SECRET || "local-sandbox-webhook-not-production",
     dataDir,
@@ -63,4 +65,12 @@ export function assertBoot(config: BootConfig): void {
   }
   if (config.seed) throw new Error("Produkcia odmietla lokálny seed.");
   if (config.store !== "sqlite") throw new Error("Produkcia odmietla pamäťový store.");
+}
+
+function readHost(source: NodeJS.ProcessEnv): string {
+  const raw = source.EFAKTURA_HOST?.trim() || "0.0.0.0";
+  if (!/^[A-Za-z0-9.:[\]-]+$/.test(raw) || raw.length > 253) {
+    throw new Error("EFAKTURA_HOST je neplatný.");
+  }
+  return raw;
 }

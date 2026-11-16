@@ -84,7 +84,7 @@ const started = await startServer({
   emulatorSecret: config.emulatorSecret,
   rateLimitPerMinute: 120,
   port: config.port,
-  host: "0.0.0.0",
+  host: config.host,
 });
 console.log(JSON.stringify({
   listening: started.url,
@@ -97,10 +97,14 @@ console.log(JSON.stringify({
 async function shutdown(): Promise<void> {
   if (stopped) return;
   stopped = true;
+  const force = setTimeout(() => process.exit(0), 2_000);
+  force.unref();
+  started.server.closeAllConnections();
   await new Promise<void>((resolve) => started.server.close(() => resolve()));
   await ticking;
   await worker;
   store.close();
+  clearTimeout(force);
   process.exit(0);
 }
 process.on("SIGTERM", () => { void shutdown(); });

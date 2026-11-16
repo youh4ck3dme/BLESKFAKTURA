@@ -26,6 +26,7 @@ ENV EFAKTURA_ENV=local \
     EFAKTURA_AUTH_MODE=emulator \
     EFAKTURA_PROVIDER=local-sandbox \
     EFAKTURA_PORT=8088 \
+    EFAKTURA_HOST=0.0.0.0 \
     EFAKTURA_LOCAL_SEED=1 \
     EFAKTURA_STORE=sqlite \
     EFAKTURA_DATA_DIR=/data \

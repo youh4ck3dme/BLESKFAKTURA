@@ -1,14 +1,15 @@
 package sk.bizagent.efaktura
 
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
-import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -21,10 +22,10 @@ class BridgeLiveTest {
         val draftJson = File(module, "fixtures/synthetic/base-example.outbound.json").readText(StandardCharsets.UTF_8)
         val data = java.nio.file.Files.createTempDirectory("efaktura-live")
         val secret = "local-only-not-a-production-secret"
-        val port = ServerSocket(0).use { it.localPort }
         val process = ProcessBuilder("node", "--disable-warning=ExperimentalWarning", "dist/apps/api/src/index.js")
             .directory(module)
             .redirectErrorStream(true)
+            .redirectInput(ProcessBuilder.Redirect.from(File("/dev/null")))
             .apply {
                 environment()["EFAKTURA_ENV"] = "local"
                 environment()["EFAKTURA_AUTH_MODE"] = "emulator"
@@ -33,7 +34,8 @@ class BridgeLiveTest {
                 environment()["EFAKTURA_STORE"] = "sqlite"
                 environment()["EFAKTURA_DATA_DIR"] = data.toString()
                 environment()["EFAKTURA_VALIDATOR_CACHE"] = data.resolve("cache").toString()
-                environment()["EFAKTURA_PORT"] = port.toString()
+                environment()["EFAKTURA_PORT"] = "0"
+                environment()["EFAKTURA_HOST"] = "127.0.0.1"
                 environment()["EFAKTURA_EMULATOR_SECRET"] = secret
                 environment()["EFAKTURA_SANDBOX_WEBHOOK_SECRET"] = "local-sandbox-webhook-not-production"
             }
@@ -46,16 +48,22 @@ class BridgeLiveTest {
         }
         pump.isDaemon = true
         pump.start()
+        val http = OkHttpClient.Builder().callTimeout(60, TimeUnit.SECONDS).build()
         try {
             val base = waitForListening(process, output)
+            assertTrue(base.startsWith("http://127.0.0.1:"))
             val exp = System.currentTimeMillis() + 30 * 60_000
-            val buyer = client(base, "tenant-buyer", secret, "uid-buyer", exp)
-            val supplier = client(base, "tenant-supplier", secret, "uid-supplier", exp)
+            val buyer = client(base, "tenant-buyer", secret, "uid-buyer", exp, http)
+            val supplier = client(base, "tenant-supplier", secret, "uid-supplier", exp, http)
             val imported = buyer.importXml(Direction.INBOUND, invoice.inputStream(), "live-import")
             val document = imported.document ?: error("import bez dokladu")
             assertEquals("Snippet1", document.number)
             assertEquals(true, document.validation?.technicalPass)
             assertEquals(false, document.validation?.productionEligible)
+            val presented = presentDocument(document)
+            assertEquals(LOCAL_TEST_BANNER, presented.banner)
+            assertTrue(presented.technicalText.contains("Nie je to legislatívne platná faktúra."))
+            assertEquals(ValidationStatus.UNSUPPORTED, document.validation?.layers?.firstOrNull { it.layer == "SK" }?.status)
             val loaded = buyer.getDocument(document.id)
             assertEquals(document.sha256, loaded.sha256)
             assertTrue(buyer.downloadOriginal(document.id).contentEquals(invoice))
@@ -69,6 +77,7 @@ class BridgeLiveTest {
             val report = supplier.validateDraft(draft.id, "live-validate")
             assertEquals(true, report.technicalPass)
             assertEquals(false, report.productionEligible)
+            assertEquals(ValidationStatus.UNSUPPORTED, report.layers.firstOrNull { it.layer == "SK" }?.status)
             val issued = supplier.issueDraft(draft.id, "live-issue")
             val queued = supplier.sendDocument(issued.id, "live-send")
             assertEquals(DeliveryStatus.QUEUED, queued.delivery?.status)
@@ -83,9 +92,9 @@ class BridgeLiveTest {
             assertEquals(true, delivery.simulated)
             assertFalse(delivery.productionReceipt)
         } finally {
-            process.destroy()
-            process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-            process.destroyForcibly()
+            http.dispatcher.executorService.shutdown()
+            http.connectionPool.evictAll()
+            stopProcess(process)
             File(data.toString()).deleteRecursively()
         }
     }
@@ -102,12 +111,25 @@ class BridgeLiveTest {
         error("Server nepočúva.\n${synchronized(output) { output.toString() }}")
     }
 
-    private fun client(base: String, tenantId: String, secret: String, uid: String, exp: Long): HttpEfakturaClient {
+    private fun stopProcess(process: Process) {
+        val handle = process.toHandle()
+        val children = handle.descendants().toList()
+        if (process.isAlive) process.destroy()
+        if (!process.waitFor(3, TimeUnit.SECONDS)) {
+            children.forEach { runCatching { it.destroy() } }
+            process.destroyForcibly()
+            children.forEach { runCatching { it.destroyForcibly() } }
+            process.waitFor(3, TimeUnit.SECONDS)
+        }
+    }
+
+    private fun client(base: String, tenantId: String, secret: String, uid: String, exp: Long, http: OkHttpClient): HttpEfakturaClient {
         return HttpEfakturaClient(
             base,
             tenantId,
             AuthTokenProvider { sign(secret, """{"uid":"$uid","typ":"user","exp":$exp}""") },
-            AppCheckTokenProvider { sign(secret, """{"typ":"appcheck","exp":$exp}""") }
+            AppCheckTokenProvider { sign(secret, """{"typ":"appcheck","exp":$exp}""") },
+            http
         )
     }
 

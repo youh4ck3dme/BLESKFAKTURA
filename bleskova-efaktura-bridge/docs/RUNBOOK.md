@@ -40,7 +40,11 @@ curl -sS -H "Authorization: $AUTH" -H "X-Firebase-AppCheck: $APP" \
 
 Opakovanie toho istého kľúča vráti ten istý doklad. Iný obsah s tým istým kľúčom je `IDEMPOTENCY_PAYLOAD_MISMATCH`. Po deterministickej chybe sa kľúč nezasekne v `IN_PROGRESS`. Obnoviteľná chyba ide do `RETRYABLE`. Neistý výsledok poštára je `UNKNOWN` a ďalší tick robí lookup, nie druhý submit.
 
-Sandbox issue/send/delivery prešiel aj z Kotlin klienta (`BridgeLiveTest`). `productionReceipt` bol `false`.
+Sandbox issue/send/delivery prešiel aj z Kotlin klienta (`BridgeLiveTest`). `productionReceipt` bol `false`. Server v tom teste počúva na `127.0.0.1` a porte `0` (jadro pridelí port až v `listen`, test ho neuhádne vopred). `EFAKTURA_HOST` inak ostáva `0.0.0.0`, lebo to potrebuje Docker. SIGTERM zatvorí keep-alive spojenia (`closeAllConnections`) a do dvoch sekúnd proces skončí, aby test worker nevisel na pipe.
+
+Kotlin testy: `cd android/efaktura-client && ./gradlew test`. Wrapper 9.3.1. Starý 8.10.2 tu končil exit 1 ešte pred assertmi, lebo cudzí HTTP klient zhodil worker. Podrobnosti: `reports/gradle-worker-diagnosis.md`.
+
+CI workflow: `.github/workflows/efaktura-bridge.yml` (Node 22, JDK 17, `npm ci`, typecheck, `npm test`, `npm audit --audit-level=high`, `./gradlew test`, Docker smoke). Vzdialený beh GitHub Actions je v tomto kole **NOT_RUN**, kým ho nespustí push a neskončí. Lokálny Docker daemon v tomto prostredí nie je.
 
 Mutácie potrebujú `Authorization`, `X-Firebase-AppCheck` a `X-Tenant-Id`. Cesta `/v1/tenants/{id}` musí sedieť s hlavičkou. Ani hlavička, ani cesta nie sú členstvo.
 

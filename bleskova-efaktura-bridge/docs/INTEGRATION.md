@@ -1,33 +1,40 @@
 # Integrácia do Bleskovej Faktúry
 
-Patch je **neaplikovaný**. Vetva `grokbranch` pridáva len adresár `bleskova-efaktura-bridge/`.
+Patch je **neaplikovaný**. Konkrétny diff je `integration/android-app.patch`. Návod na aplikovanie je `integration/APPLY.md`. Vetva `grokbranch` ním nemení hlavnú aplikáciu.
 
 Nemení sa:
 
 - `applicationId` (`sk.bizagent.bleskovafaktura` v aktuálnom `app/build.gradle.kts`)
 - podpis, `google-services`, Firebase projekt
-- `AppDatabase` version 1, tabuľka `invoices`, UI, ViewModely
+- `AppDatabase` version 1, tabuľka `invoices`, existujúce UI a ViewModely (kým sa patch ručne neaplikuje)
 
 Existujúci model `Invoice.totalAmount: Double` nie je doména eFaktúry.
 
-## Minimálny patch, ktorý treba spraviť pri release
+## Prečo included build, nie Android knižnica
 
-`settings.gradle.kts` (neaplikované):
-
-```kotlin
-include(":app")
-include(":efaktura-client")
-project(":efaktura-client").projectDir = file("bleskova-efaktura-bridge/android/efaktura-client")
-```
-
-`app/build.gradle.kts` dependencies (neaplikované), až keď bude modul Android-kompatibilný alebo cez included build:
+Klient je JVM modul s vlastným `settings.gradle.kts`. `include(":efaktura-client")` by ho nepripojil ako podprojekt. `com.android.library` by bol zbytočný: modul nemá Android API. Patch preto používa:
 
 ```kotlin
-implementation(project(":efaktura-client"))
+includeBuild("bleskova-efaktura-bridge/android/efaktura-client")
 ```
 
-Klient sa skladá s base URL bridge API, nie s Firebase project ID v knižnici.
-Firebase Auth a App Check v tomto module **nie sú otestované** proti reálnemu projektu. Príklad nižšie je len kompilovateľný náčrt, nie zelený test.
+a závislosť `sk.bizagent.efaktura:efaktura-client:0.1.0`. AGP kompatibilita **nie je overená**, v tomto prostredí nie je Android SDK. Aplikácia kompiluje na Java 11, klient na toolchain 17.
+
+## Čo patch zapína, keď ho aplikuješ
+
+Predvolene je funkcia vypnutá, aj v debug. Release má `EFAKTURA_BRIDGE_ENABLED=false` a prázdne URL, tenant aj secret. HMAC a sandbox idú len z gitignorovaného `local.properties` v debug.
+
+Obrazovka, keď je zapnutá, ukazuje:
+
+„Lokálny testovací režim — nejde o produkčné doručenie.“
+
+`technicalPass=true` znamená len technickú vrstvu. Text výslovne hovorí, že to nie je legislatívne platná faktúra. Slovenská vrstva a doručenie sú oddelené. Zmena účtu zruší operáciu a vyčistí stav. XML ide cez systémový picker.
+
+Room migrácia ostáva len plán v `examples/android-integration/RoomMigrationPlan.kt`. Neaplikovať.
+
+## Neskorší produkčný klient
+
+Toto nie je súčasť patchu a nie je to zelený test. Firebase Auth a App Check nie sú overené proti reálnemu projektu. Až bude server overovať Firebase, klient má brať token takto. HMAC emulátor do release nepatrí.
 
 ```kotlin
 val expectedUid = firebaseUser.uid
@@ -49,12 +56,6 @@ val client = HttpEfakturaClient(
 ```
 
 `getIdToken(false).await()` vracia `GetTokenResult`, nie `String`. Do klienta ide až `.token`.
-Každé volanie klienta posiela `X-Tenant-Id` aj cestu `/v1/tenants/{id}`. Ani jedno nie je dôkaz členstva. Server načíta členstvo uid vo firme. Klient nesmie posielať rolu ako dôkaz.
+Každé volanie klienta posiela `X-Tenant-Id` aj cestu `/v1/tenants/{id}`. Ani jedno nie je členstvo. Server načíta členstvo uid vo firme. Klient nesmie posielať rolu ako dôkaz.
 
-`sendDocument` vracia doklad. Stav je v `document.delivery`, nie ako top-level `DeliveryDto`. Samotný stav číta `getDeliveryState`.
-
-Volanie z obrazovky ide cez `examples/android-integration/EfakturaImportViewModel.kt`. Nový súbor dostane nový `Idempotency-Key`. Retry tej istej operácie použije pôvodný kľúč. Pri zmene účtu sa job zruší. Release nesmie mať demo login. ViewModel nie je zapojený do aplikácie.
-
-Room: `examples/android-integration/RoomMigrationPlan.kt`. Migrácia 1 → 2 pridá `efaktura_documents` a `efaktura_notes`. XML ostáva celé podľa sha256. Poznámka nie je súčasť originálu. Rollback neresetuje `invoices`.
-
-Server musí načítať členstvo uid vo firme. Samotný Firebase token nestačí a klient nesmie posielať rolu ako dôkaz.
+`sendDocument` vracia doklad. Stav je v `document.delivery`, nie ako top-level `DeliveryDto`. Samotný stav číta `getDeliveryState`. `ValidationReportDto` nesie `layers` a `issues`, slovenská vrstva je `SK`.

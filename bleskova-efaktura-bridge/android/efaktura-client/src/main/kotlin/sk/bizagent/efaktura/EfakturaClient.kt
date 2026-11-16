@@ -68,11 +68,29 @@ data class DocumentDto(
 data class ListResponseDto(val items: List<DocumentDto>, val nextCursor: String? = null, val correlationId: String? = null)
 
 @JsonClass(generateAdapter = true)
+data class ValidationIssueDto(
+    val layer: String,
+    val severity: String,
+    val ruleId: String,
+    val message: String,
+    val path: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class LayerResultDto(
+    val layer: String,
+    val status: ValidationStatus,
+    val rulesetVersion: String
+)
+
+@JsonClass(generateAdapter = true)
 data class ValidationReportDto(
     val status: ValidationStatus,
     val validatedSha256: String,
     val productionEligible: Boolean,
     val technicalPass: Boolean,
+    val issues: List<ValidationIssueDto> = emptyList(),
+    val layers: List<LayerResultDto> = emptyList(),
     val correlationId: String? = null
 )
 
@@ -117,7 +135,7 @@ class HttpEfakturaClient(
     private val tenantId: String,
     private val authTokens: AuthTokenProvider,
     private val appCheckTokens: AppCheckTokenProvider,
-    http: OkHttpClient = OkHttpClient.Builder().callTimeout(60, TimeUnit.SECONDS).build()
+    private val http: OkHttpClient = OkHttpClient.Builder().callTimeout(60, TimeUnit.SECONDS).build()
 ) : EfakturaClient {
     private val moshi = Moshi.Builder().add(generatedAdapters()).build()
     private val api = Retrofit.Builder()
@@ -167,6 +185,11 @@ class HttpEfakturaClient(
     override suspend fun sendDocument(id: String, idempotencyKey: String) = call(api.send(tenantId, tenantId, id, idempotencyKey, authHeader(), appCheckHeader()))
     override suspend fun getDeliveryState(id: String) = call(api.delivery(tenantId, tenantId, id, authHeader(), appCheckHeader()))
 
+    fun close() {
+        http.dispatcher.executorService.shutdown()
+        http.connectionPool.evictAll()
+    }
+
     private suspend fun authHeader() = "Bearer ${authTokens.token()}"
     private suspend fun appCheckHeader() = appCheckTokens.token()
 
@@ -212,6 +235,8 @@ private fun generatedAdapters(): com.squareup.moshi.JsonAdapter.Factory = com.sq
         DocumentDto::class.java -> DocumentDtoJsonAdapter(moshi)
         ListResponseDto::class.java -> ListResponseDtoJsonAdapter(moshi)
         ValidationReportDto::class.java -> ValidationReportDtoJsonAdapter(moshi)
+        ValidationIssueDto::class.java -> ValidationIssueDtoJsonAdapter(moshi)
+        LayerResultDto::class.java -> LayerResultDtoJsonAdapter(moshi)
         DeliveryDto::class.java -> DeliveryDtoJsonAdapter(moshi)
         else -> null
     }

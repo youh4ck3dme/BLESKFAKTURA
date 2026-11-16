@@ -318,6 +318,13 @@ test("tenant header is not membership and production refuses local seed", async 
   local.close();
 });
 
+test("bind host defaults to all interfaces and rejects junk", () => {
+  assert.equal(readBootConfig(root, {}).host, "0.0.0.0");
+  assert.equal(readBootConfig(root, { EFAKTURA_HOST: "127.0.0.1", EFAKTURA_PORT: "0" }).host, "127.0.0.1");
+  assert.equal(readBootConfig(root, { EFAKTURA_PORT: "0" }).port, 0);
+  assert.throws(() => readBootConfig(root, { EFAKTURA_HOST: "http://evil" }), /EFAKTURA_HOST/);
+});
+
 test("loadEnvFile does not override existing variables", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "efaktura-env-"));
   const file = path.join(dir, ".env");

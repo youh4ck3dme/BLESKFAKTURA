@@ -1,0 +1,450 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index a44455a..6063bb9 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -1,4 +1,5 @@
+ import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
++import java.util.Properties
+ 
+ plugins {
+   alias(libs.plugins.android.application)
+@@ -9,6 +10,22 @@ plugins {
+   alias(libs.plugins.google.services)
+ }
+ 
++val efakturaLocalProperties = Properties().apply {
++  val file = rootProject.file("local.properties")
++  if (file.exists()) file.inputStream().use { load(it) }
++}
++
++fun efakturaLocal(name: String): String {
++  return efakturaLocalProperties.getProperty(name, "")
++    .replace("\\", "\\\\")
++    .replace("\"", "\\\"")
++    .lineSequence()
++    .firstOrNull()
++    .orEmpty()
++}
++
++fun efakturaConfigString(value: String): String = "\"$value\""
++
+ android {
+   namespace = "com.example"
+   compileSdk { version = release(36) { minorApiLevel = 1 } }
+@@ -20,6 +37,13 @@ android {
+     versionCode = 2
+     versionName = "1.1"
+ 
++    // Default off. Debug may opt in from gitignored local.properties.
++    // Release overwrites these fields back to empty/false.
++    buildConfigField("boolean", "EFAKTURA_BRIDGE_ENABLED", "false")
++    buildConfigField("String", "EFAKTURA_BASE_URL", "\"\"")
++    buildConfigField("String", "EFAKTURA_TENANT_ID", "\"\"")
++    buildConfigField("String", "EFAKTURA_EMULATOR_SECRET", "\"\"")
++
+     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+   }
+ 
+@@ -45,8 +69,19 @@ android {
+       isMinifyEnabled = false
+       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+       signingConfig = signingConfigs.getByName("release")
++      buildConfigField("boolean", "EFAKTURA_BRIDGE_ENABLED", "false")
++      buildConfigField("String", "EFAKTURA_BASE_URL", "\"\"")
++      buildConfigField("String", "EFAKTURA_TENANT_ID", "\"\"")
++      buildConfigField("String", "EFAKTURA_EMULATOR_SECRET", "\"\"")
++    }
++    debug {
++      signingConfig = signingConfigs.getByName("debugConfig")
++      val enabled = efakturaLocal("EFAKTURA_BRIDGE_ENABLED") == "true"
++      buildConfigField("boolean", "EFAKTURA_BRIDGE_ENABLED", enabled.toString())
++      buildConfigField("String", "EFAKTURA_BASE_URL", efakturaConfigString(efakturaLocal("EFAKTURA_BASE_URL")))
++      buildConfigField("String", "EFAKTURA_TENANT_ID", efakturaConfigString(efakturaLocal("EFAKTURA_TENANT_ID")))
++      buildConfigField("String", "EFAKTURA_EMULATOR_SECRET", efakturaConfigString(efakturaLocal("EFAKTURA_EMULATOR_SECRET")))
+     }
+-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+   }
+   compileOptions {
+     sourceCompatibility = JavaVersion.VERSION_11
+@@ -110,6 +145,7 @@ dependencies {
+   implementation(libs.firebase.appcheck.debug)
+   implementation(libs.kotlinx.coroutines.android)
+   implementation(libs.kotlinx.coroutines.core)
++  implementation("sk.bizagent.efaktura:efaktura-client:0.1.0")
+   // implementation(libs.logging.interceptor)
+   // implementation(libs.moshi.kotlin)
+   // implementation(libs.okhttp)
+diff --git a/app/src/main/java/com/example/MainActivity.kt b/app/src/main/java/com/example/MainActivity.kt
+index 4d2490e..56f7208 100644
+--- a/app/src/main/java/com/example/MainActivity.kt
++++ b/app/src/main/java/com/example/MainActivity.kt
+@@ -16,16 +16,18 @@ import androidx.compose.runtime.setValue
+ import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.ui.Modifier
+ import androidx.lifecycle.viewmodel.compose.viewModel
++import com.example.BuildConfig
+ import com.example.data.configureAppCheck
+ import com.example.ui.InvoiceViewModel
+ import com.example.ui.screens.DashboardScreen
++import com.example.ui.screens.EfakturaBridgeScreen
+ import com.example.ui.screens.LoginScreen
+ import com.example.ui.screens.PricingScreen
+ import com.example.ui.screens.ScanScreen
+ import com.example.ui.theme.MyApplicationTheme
+ 
+ enum class AppScreen {
+-    LOGIN, DASHBOARD, SCAN, PRICING
++    LOGIN, DASHBOARD, SCAN, PRICING, EFAKTURA
+ }
+ 
+ class MainActivity : ComponentActivity() {
+@@ -74,7 +76,12 @@ fun MainAppNavigation(viewModel: InvoiceViewModel = viewModel()) {
+                 viewModel = viewModel,
+                 onNavigateToScan = { currentScreen = AppScreen.SCAN },
+                 onNavigateToPricing = { currentScreen = AppScreen.PRICING },
+-                onSignOut = { viewModel.signOut() }
++                onSignOut = { viewModel.signOut() },
++                onNavigateToEfaktura = if (BuildConfig.EFAKTURA_BRIDGE_ENABLED) {
++                    { currentScreen = AppScreen.EFAKTURA }
++                } else {
++                    null
++                }
+             )
+             AppScreen.SCAN -> ScanScreen(
+                 viewModel = viewModel,
+@@ -84,6 +91,10 @@ fun MainAppNavigation(viewModel: InvoiceViewModel = viewModel()) {
+                 viewModel = viewModel,
+                 onNavigateBack = { currentScreen = AppScreen.DASHBOARD }
+             )
++            AppScreen.EFAKTURA -> EfakturaBridgeScreen(
++                uid = currentUser?.uid,
++                onNavigateBack = { currentScreen = AppScreen.DASHBOARD }
++            )
+         }
+     }
+ }
+diff --git a/app/src/main/java/com/example/data/EfakturaBridgeFactory.kt b/app/src/main/java/com/example/data/EfakturaBridgeFactory.kt
+new file mode 100644
+index 0000000..61b576c
+--- /dev/null
++++ b/app/src/main/java/com/example/data/EfakturaBridgeFactory.kt
+@@ -0,0 +1,46 @@
++package com.example.data
++
++import android.util.Base64
++import com.example.BuildConfig
++import javax.crypto.Mac
++import javax.crypto.spec.SecretKeySpec
++import sk.bizagent.efaktura.AppCheckTokenProvider
++import sk.bizagent.efaktura.AuthTokenProvider
++import sk.bizagent.efaktura.EfakturaClient
++import sk.bizagent.efaktura.HttpEfakturaClient
++
++/**
++ * Debug-only local bridge. Release always returns null.
++ * HMAC secret, tenant and base URL come from local.properties, never from the release binary.
++ */
++object EfakturaBridgeFactory {
++    fun available(): Boolean {
++        return BuildConfig.EFAKTURA_BRIDGE_ENABLED &&
++            BuildConfig.BUILD_TYPE != "release" &&
++            BuildConfig.EFAKTURA_BASE_URL.isNotBlank() &&
++            BuildConfig.EFAKTURA_TENANT_ID.isNotBlank() &&
++            BuildConfig.EFAKTURA_EMULATOR_SECRET.isNotBlank()
++    }
++
++    fun tenantId(): String = if (BuildConfig.BUILD_TYPE == "release") "" else BuildConfig.EFAKTURA_TENANT_ID
++
++    fun client(uid: String): EfakturaClient? {
++        if (!available() || uid.isBlank()) return null
++        val secret = BuildConfig.EFAKTURA_EMULATOR_SECRET
++        val exp = System.currentTimeMillis() + 30 * 60_000
++        return HttpEfakturaClient(
++            BuildConfig.EFAKTURA_BASE_URL,
++            BuildConfig.EFAKTURA_TENANT_ID,
++            AuthTokenProvider { sign(secret, """{"uid":"$uid","typ":"user","exp":$exp}""") },
++            AppCheckTokenProvider { sign(secret, """{"typ":"appcheck","exp":$exp}""") }
++        )
++    }
++
++    private fun sign(secret: String, json: String): String {
++        val body = Base64.encodeToString(json.toByteArray(), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
++        val mac = Mac.getInstance("HmacSHA256")
++        mac.init(SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
++        val sig = Base64.encodeToString(mac.doFinal(body.toByteArray()), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
++        return "emu.$body.$sig"
++    }
++}
+diff --git a/app/src/main/java/com/example/ui/efaktura/EfakturaBridgeViewModel.kt b/app/src/main/java/com/example/ui/efaktura/EfakturaBridgeViewModel.kt
+new file mode 100644
+index 0000000..675e161
+--- /dev/null
++++ b/app/src/main/java/com/example/ui/efaktura/EfakturaBridgeViewModel.kt
+@@ -0,0 +1,52 @@
++package com.example.ui.efaktura
++
++import androidx.lifecycle.ViewModel
++import androidx.lifecycle.viewModelScope
++import com.example.data.EfakturaBridgeFactory
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
++import sk.bizagent.efaktura.EfakturaSession
++import sk.bizagent.efaktura.LOCAL_TEST_BANNER
++
++class EfakturaBridgeViewModel : ViewModel() {
++    private val _state = MutableStateFlow<EfakturaSession.State>(EfakturaSession.State.Idle)
++    val state: StateFlow<EfakturaSession.State> = _state.asStateFlow()
++    private val session = EfakturaSession(viewModelScope) { uid, _ ->
++        EfakturaBridgeFactory.client(uid)
++            ?: throw IllegalStateException("Lokálny eFaktúra režim nie je nakonfigurovaný.")
++    }.also { created ->
++        created.onState = { _state.value = it }
++    }
++
++    val banner: String = LOCAL_TEST_BANNER
++    val configured: Boolean = EfakturaBridgeFactory.available()
++
++    fun onAccountChanged(uid: String?) {
++        val tenant = EfakturaBridgeFactory.tenantId().ifBlank { null }
++        session.onAccountChanged(uid, if (uid == null) null else tenant)
++    }
++
++    fun importBytes(bytes: ByteArray): String? = session.import(bytes.inputStream())
++
++    fun retry(operationKey: String) {
++        session.retry(operationKey)
++    }
++
++    fun refresh() {
++        session.refresh()
++    }
++
++    fun open(id: String) {
++        session.open(id)
++    }
++
++    fun cancel() {
++        session.cancel()
++    }
++
++    override fun onCleared() {
++        session.cancel()
++        super.onCleared()
++    }
++}
+diff --git a/app/src/main/java/com/example/ui/screens/DashboardScreen.kt b/app/src/main/java/com/example/ui/screens/DashboardScreen.kt
+index 4c5c366..a536fa4 100644
+--- a/app/src/main/java/com/example/ui/screens/DashboardScreen.kt
++++ b/app/src/main/java/com/example/ui/screens/DashboardScreen.kt
+@@ -70,7 +70,8 @@ fun DashboardScreen(
+     viewModel: InvoiceViewModel,
+     onNavigateToScan: () -> Unit,
+     onNavigateToPricing: () -> Unit,
+-    onSignOut: () -> Unit
++    onSignOut: () -> Unit,
++    onNavigateToEfaktura: (() -> Unit)? = null
+ ) {
+     val currentUser by viewModel.currentUser.collectAsState()
+     val invoices by viewModel.invoices.collectAsState()
+@@ -116,6 +117,18 @@ fun DashboardScreen(
+                     }
+                 },
+                 actions = {
++                    if (onNavigateToEfaktura != null) {
++                        IconButton(
++                            onClick = onNavigateToEfaktura,
++                            modifier = Modifier.testTag("efaktura_button")
++                        ) {
++                            Icon(
++                                imageVector = Icons.Default.ReceiptLong,
++                                contentDescription = "eFaktúra",
++                                tint = Color(0xFF6750A4)
++                            )
++                        }
++                    }
+                     IconButton(
+                         onClick = onNavigateToPricing,
+                         modifier = Modifier
+diff --git a/app/src/main/java/com/example/ui/screens/EfakturaBridgeScreen.kt b/app/src/main/java/com/example/ui/screens/EfakturaBridgeScreen.kt
+new file mode 100644
+index 0000000..1ebf426
+--- /dev/null
++++ b/app/src/main/java/com/example/ui/screens/EfakturaBridgeScreen.kt
+@@ -0,0 +1,166 @@
++package com.example.ui.screens
++
++import android.net.Uri
++import androidx.activity.compose.rememberLauncherForActivityResult
++import androidx.activity.result.contract.ActivityResultContracts
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.items
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.automirrored.filled.ArrowBack
++import androidx.compose.material.icons.filled.Close
++import androidx.compose.material3.Button
++import androidx.compose.material3.Card
++import androidx.compose.material3.ExperimentalMaterial3Api
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.LinearProgressIndicator
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.Scaffold
++import androidx.compose.material3.Text
++import androidx.compose.material3.TopAppBar
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.unit.dp
++import androidx.lifecycle.viewmodel.compose.viewModel
++import com.example.ui.efaktura.EfakturaBridgeViewModel
++import sk.bizagent.efaktura.EfakturaSession
++
++@OptIn(ExperimentalMaterial3Api::class)
++@Composable
++fun EfakturaBridgeScreen(
++    uid: String?,
++    onNavigateBack: () -> Unit,
++    model: EfakturaBridgeViewModel = viewModel()
++) {
++    val context = LocalContext.current
++    val state by model.state.collectAsState()
++    var lastKey by remember { mutableStateOf<String?>(null) }
++    LaunchedEffect(uid) { model.onAccountChanged(uid) }
++    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
++        if (uri == null) return@rememberLauncherForActivityResult
++        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@rememberLauncherForActivityResult
++        lastKey = model.importBytes(bytes)
++    }
++
++    Scaffold(
++        topBar = {
++            TopAppBar(
++                title = { Text("eFaktúra") },
++                navigationIcon = {
++                    IconButton(onClick = onNavigateBack) {
++                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Späť")
++                    }
++                },
++                actions = {
++                    IconButton(onClick = model::cancel) {
++                        Icon(Icons.Default.Close, contentDescription = "Zrušiť operáciu")
++                    }
++                }
++            )
++        }
++    ) { padding ->
++        LazyColumn(
++            modifier = Modifier.fillMaxSize().padding(padding),
++            contentPadding = PaddingValues(16.dp),
++            verticalArrangement = Arrangement.spacedBy(12.dp)
++        ) {
++            item {
++                Card(modifier = Modifier.fillMaxWidth()) {
++                    Text(
++                        text = model.banner,
++                        modifier = Modifier.padding(16.dp),
++                        style = MaterialTheme.typography.titleMedium
++                    )
++                }
++            }
++            if (!model.configured) {
++                item {
++                    Text("Funkcia je vypnutá. V debug zostavení ju zapne local.properties, release ju vždy drží vypnutú. HMAC a sandbox sa do produkčného balíka nedostanú.")
++                }
++            }
++            item {
++                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                    Button(onClick = { picker.launch(arrayOf("application/xml", "text/xml", "*/*")) }, enabled = model.configured && uid != null) {
++                        Text("Vybrať XML")
++                    }
++                    OutlinedButton(onClick = model::refresh, enabled = model.configured && uid != null) {
++                        Text("Obnoviť zoznam")
++                    }
++                    lastKey?.let { key ->
++                        OutlinedButton(onClick = { model.retry(key) }, enabled = model.configured) {
++                            Text("Zopakovať")
++                        }
++                    }
++                }
++            }
++            if (state is EfakturaSession.State.Loading) {
++                item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
++            }
++            when (val current = state) {
++                is EfakturaSession.State.Ready -> {
++                    current.error?.let { message -> item { Text(message) } }
++                    current.opened?.let { opened ->
++                        item { SectionCard("Technická validácia", opened.technicalText) }
++                        item {
++                            SectionCard(
++                                "Slovenské pravidlá",
++                                buildString {
++                                    append(opened.slovakText)
++                                    if (opened.slovakIssues.isNotEmpty()) {
++                                        append("\n")
++                                        append(opened.slovakIssues.joinToString("\n"))
++                                    }
++                                }
++                            )
++                        }
++                        item { SectionCard("Doručenie", opened.deliveryText) }
++                        item {
++                            Text(
++                                if (opened.productionEligible == true) "productionEligible=true" else "productionEligible=false. Nie je to produkčné doručenie."
++                            )
++                        }
++                    }
++                    items(current.items, key = { it.id }) { document ->
++                        Card(
++                            modifier = Modifier
++                                .fillMaxWidth()
++                                .clickable { model.open(document.id) }
++                        ) {
++                            Column(modifier = Modifier.padding(12.dp)) {
++                                Text(document.number ?: document.id, style = MaterialTheme.typography.titleSmall)
++                                Text("Technicky: ${document.validation?.technicalPass?.toString() ?: "neoverené"} · SK a doručenie sú v detaile")
++                            }
++                        }
++                    }
++                }
++                else -> Unit
++            }
++        }
++    }
++}
++
++@Composable
++private fun SectionCard(title: String, body: String) {
++    Card(modifier = Modifier.fillMaxWidth()) {
++        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
++            Text(title, style = MaterialTheme.typography.titleSmall)
++            Text(body)
++        }
++    }
++}
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 1f649d9..b601886 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -24,4 +24,5 @@ dependencyResolutionManagement {
+ 
+ rootProject.name = "Blesková Faktúra"
+ 
++includeBuild("bleskova-efaktura-bridge/android/efaktura-client")
+ include(":app")

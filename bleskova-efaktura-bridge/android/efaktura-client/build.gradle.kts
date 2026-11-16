@@ -23,4 +23,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
 
-tasks.test { useJUnit() }
+tasks.test {
+    useJUnit()
+    maxParallelForks = 1
+}

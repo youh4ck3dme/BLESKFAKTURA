@@ -54,7 +54,9 @@ cd android/efaktura-client
 ./gradlew test
 ```
 
-Android SDK tu nie je, knižnica je JVM modul. ViewModel a Room plán v `examples/android-integration` nie sú zapojené do aplikácie.
+Wrapper je Gradle **9.3.1** (nie 8.10.2). 8.10.2 zabíjal test worker, keď na jeho socket prišlo HTTP `GET` (prvý bajt `G` = type tag 71) a worker potom hlásil connection refused. Oprava je [gradle/gradle#35175](https://github.com/gradle/gradle/issues/27801) v 9.3. Testy sa nespúšťajú ako úspech len preto, že existuje JUnit XML.
+
+Android SDK tu nie je, knižnica je JVM modul. Integračný patch je v `integration/android-app.patch` a **nie je aplikovaný**. Návod: `integration/APPLY.md`.
 
 ## Podporované / nepodporované
 

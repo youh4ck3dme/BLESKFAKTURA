@@ -1,0 +1,89 @@
+name: efaktura-bridge
+
+on:
+  push:
+    branches: [grokbranch]
+    paths:
+      - "bleskova-efaktura-bridge/**"
+      - ".github/workflows/efaktura-bridge.yml"
+  pull_request:
+    paths:
+      - "bleskova-efaktura-bridge/**"
+      - ".github/workflows/efaktura-bridge.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: bleskova-efaktura-bridge/package-lock.json
+
+      - name: npm ci
+        working-directory: bleskova-efaktura-bridge
+        run: npm ci
+
+      - name: typecheck
+        working-directory: bleskova-efaktura-bridge
+        run: npm run typecheck
+
+      - name: npm test
+        working-directory: bleskova-efaktura-bridge
+        run: npm test
+
+      - name: npm audit
+        working-directory: bleskova-efaktura-bridge
+        run: npm audit --audit-level=high
+
+      - name: Kotlin tests against current dist
+        working-directory: bleskova-efaktura-bridge/android/efaktura-client
+        run: ./gradlew test --no-daemon
+
+      - name: Docker build and smoke
+        run: |
+          set -euo pipefail
+          docker build -t efaktura-bridge:ci bleskova-efaktura-bridge
+          set +e
+          docker run --rm \
+            -e EFAKTURA_ENV=production \
+            -e EFAKTURA_AUTH_MODE=emulator \
+            -e EFAKTURA_PROVIDER=local-sandbox \
+            -e EFAKTURA_LOCAL_SEED=1 \
+            efaktura-bridge:ci
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "production sandbox must exit 1, got $code"
+            exit 1
+          fi
+          docker run -d --name efaktura-smoke -p 127.0.0.1:18088:8088 efaktura-bridge:ci
+          trap 'docker rm -f efaktura-smoke >/dev/null 2>&1 || true' EXIT
+          ok=0
+          for _ in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:18088/health -o /tmp/efaktura-health.json; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ok" = 1
+          python3 -c 'import json; d=json.load(open("/tmp/efaktura-health.json")); assert d.get("status")=="ok" and d.get("environment")=="local"'
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: efaktura-reports
+          path: |
+            bleskova-efaktura-bridge/android/efaktura-client/build/reports/tests/test
+            bleskova-efaktura-bridge/android/efaktura-client/build/test-results/test
+          if-no-files-found: ignore
