@@ -124,7 +124,52 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon --no-configuration-cache --stacktrace
 
       - name: lintDebug
+        id: lint
+        # Pre-existing app errors abort this task. Do not set abortOnError=false.
+        # continue-on-error only lets the later checks run; the job still fails below.
+        continue-on-error: true
         run: gradle :app:lintDebug --no-daemon --no-configuration-cache --stacktrace
+
+      - name: Classify lint errors
+        if: steps.lint.outcome == 'failure'
+        run: |
+          python3 - << 'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          reports = sorted(Path("app/build").rglob("lint-results-debug.xml"))
+          known_path = Path("/tmp/lint-known.txt")
+          unexpected_path = Path("/tmp/lint-unexpected.txt")
+          if not reports:
+              unexpected_path.write_text("lint-results-debug.xml missing\n")
+              known_path.write_text("")
+              raise SystemExit(0)
+          root = ET.parse(reports[-1]).getroot()
+          known = []
+          unexpected = []
+          for issue in root.findall(".//issue"):
+              if issue.get("severity") != "Error":
+                  continue
+              loc = issue.find("location")
+              file = (loc.get("file") if loc is not None else "") or ""
+              rel = file.split("BLESKFAKTURA/")[-1]
+              line = loc.get("line") if loc is not None else "?"
+              ident = issue.get("id") or ""
+              row = f"{ident} {rel}:{line} {(issue.get('message') or '')[:180]}"
+              preexisting = (
+                  rel == "app/src/main/java/com/example/data/InvoiceAiService.kt" and ident == "NewApi"
+              ) or (
+                  rel == "app/src/main/AndroidManifest.xml"
+                  and ident == "PermissionImpliesUnsupportedChromeOsHardware"
+              )
+              (known if preexisting else unexpected).append(row)
+          known_path.write_text("\n".join(known) + ("\n" if known else ""))
+          unexpected_path.write_text("\n".join(unexpected) + ("\n" if unexpected else ""))
+          print(f"lint errors known={len(known)} unexpected={len(unexpected)} report={reports[-1]}")
+          for row in known:
+              print("KNOWN", row)
+          for row in unexpected:
+              print("UNEXPECTED", row)
+          PY
 
       - name: JVM unit test
         run: |
@@ -140,6 +185,7 @@ jobs:
             --tests com.example.InvoiceAiValidationTest
 
       - name: Release manifest keeps cleartext closed
+        if: always() && steps.robolectric.outcome != 'skipped'
         run: |
           set -euo pipefail
           gradle :app:processReleaseMainManifest --no-daemon --no-configuration-cache
@@ -168,14 +214,41 @@ jobs:
           extra = found - allowed
           if not allowed <= found or extra:
               raise SystemExit(f"cleartext domains {found}, extra {extra}")
+          print("cleartext domains", sorted(found))
           PY
 
-      - name: Record Robolectric SDK 36 result
-        if: steps.robolectric.outcome == 'failure'
+      - name: Record executed lint and Robolectric failures
+        if: always()
         run: |
-          echo "Robolectric 4.16.1 cannot execute @Config(sdk = 36): DefaultSdkProvider UnsupportedOperationException."
-          echo "ExampleUnitTest passed in the previous step. Robolectric tests were executed and failed. Not upgraded."
-          exit 1
+          set -euo pipefail
+          fail=0
+          if [ "${{ steps.lint.outcome }}" = "failure" ]; then
+            echo "lintDebug was executed and failed. abortOnError was not disabled."
+            if [ -s /tmp/lint-unexpected.txt ]; then
+              echo "Lint errors outside the pre-existing app set:"
+              cat /tmp/lint-unexpected.txt
+            elif [ -s /tmp/lint-known.txt ]; then
+              echo "Every lint error is pre-existing and outside the integration patch:"
+              echo "- NewApi in app/src/main/java/com/example/data/InvoiceAiService.kt (java.time, minSdk 24)"
+              echo "- PermissionImpliesUnsupportedChromeOsHardware in app/src/main/AndroidManifest.xml"
+              wc -l /tmp/lint-known.txt
+            else
+              echo "Lint failed and the error list was not classified."
+            fi
+            fail=1
+          elif [ "${{ steps.lint.outcome }}" = "skipped" ]; then
+            echo "lintDebug was skipped."
+            fail=1
+          fi
+          if [ "${{ steps.robolectric.outcome }}" = "failure" ]; then
+            echo "Robolectric 4.16.1 cannot execute @Config(sdk = 36): DefaultSdkProvider UnsupportedOperationException."
+            echo "ExampleRobolectricTest and InvoiceAiValidationTest were executed and failed. Robolectric was not upgraded."
+            fail=1
+          elif [ "${{ steps.robolectric.outcome }}" = "skipped" ]; then
+            echo "Robolectric tests were skipped."
+            fail=1
+          fi
+          exit "$fail"
 
       - name: Upload Android reports
         if: always()
