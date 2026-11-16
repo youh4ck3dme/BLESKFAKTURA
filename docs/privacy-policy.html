@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zásady ochrany osobných údajov — Blesková Faktúra</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.65;
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+      color: #1c1b1f;
+      background: #faf9fc;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { color: #e6e1e5; background: #141218; }
+      section { background: #1d1b20 !important; border-color: #36343b !important; }
+      code { background: #2b2930 !important; }
+    }
+    h1 { font-size: 1.9rem; margin-bottom: 0.25rem; }
+    .meta { color: #6750a4; font-weight: 600; margin-bottom: 24px; }
+    section {
+      background: #ffffff;
+      border: 1px solid #e6e1ea;
+      border-radius: 16px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    h2 { font-size: 1.15rem; margin-top: 0; }
+    code { background: #f1edf8; padding: 2px 6px; border-radius: 6px; font-size: 0.9em; }
+    ul { padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Zásady ochrany osobných údajov</h1>
+  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>) • Platné od: 16. 11. 2026</p>
+
+  <section>
+    <h2>1. Prevádzkovateľ a kontakt</h2>
+    <p>
+      Prevádzkovateľom mobilnej aplikácie <strong>Blesková Faktúra</strong> je jej vydavateľ.
+      V otázkach ochrany osobných údajov (GDPR) alebo pri žiadostiach o prístup či výmaz údajov nás kontaktujte na:
+      <a href="mailto:erikbabcan@gmail.com">erikbabcan@gmail.com</a>.
+    </p>
+  </section>
+
+  <section>
+    <h2>2. Aké údaje aplikácia spracúva</h2>
+    <ul>
+      <li><strong>Údaje účtu Google (Firebase Authentication):</strong> jedinečný identifikátor účtu (<code>UID</code>), e-mailová adresa, zobrazované meno a URL profilovej fotografie získané pri prihlásení cez Google Credential Manager.</li>
+      <li><strong>Účtovné doklady a faktúry:</strong> názov dodávateľa, IČO, DIČ, dátum vystavenia a splatnosti, suma, DPH, sadzba DPH, mena, kategória, stav úhrady a poznámky.</li>
+      <li><strong>Snímky dokladov:</strong> fotografie nasnímané fotoaparátom (iba po udelení oprávnenia <code>CAMERA</code>) alebo vybrané z galérie cez systémový Android Photo Picker (bez prístupu k celej knižnici médií). Originálne snímky sa archivujú výlučne v súkromnom internom úložisku zariadenia.</li>
+      <li><strong>Stav kreditov a nákupov:</strong> počet dostupných AI skenov, stav predplatného a overovacie tokeny nákupov sprostredkovaných cez Google Play Billing (aplikácia nikdy nezbiera ani neukladá čísla platobných kariet).</li>
+      <li><strong>Bezpečnostné tokeny zariadenia:</strong> Firebase App Check (Google reCAPTCHA) na ochranu AI a backendových rozhraní pred automatizovaným zneužitím.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>3. Účel spracúvania a príjemcovia</h2>
+    <ul>
+      <li><strong>Autentifikácia a cloudová synchronizácia:</strong> Google Ireland Ltd. / Firebase Authentication a Cloud Firestore (izolovaný priestor <code>users/{uid}</code> chránený pravidlami výlučne pre prihláseného vlastníka).</li>
+      <li><strong>AI extrakcia údajov z dokladu:</strong> snímka dokladu je jednorazovo odoslaná prostredníctvom služby Firebase AI Logic (Gemini) za účelom vyťaženia štruktúrovaných účtovných polí. Údaje nie sú využívané na cielenú reklamu.</li>
+      <li><strong>Nákupy a predplatné:</strong> Google Play Billing spracúva platbu a backendový verifikátor overuje token nákupu voči Google Play Developer API.</li>
+      <li><strong>Export PDF:</strong> súhrnný PDF výkaz vzniká lokálne v zariadení a zdieľa sa iba vtedy, keď používateľ aktívne zvolí export a cieľovú aplikáciu.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>4. Lokálne ukladanie a zálohovanie zariadenia</h2>
+    <p>
+      Lokálna databáza (Room) aj archivované fotografie sú uložené v súkromnom úložisku aplikácie.
+      Automatické zálohovanie systému Android (<code>allowBackup="false"</code>) aj prenos citlivej databázy, preferencií a priečinka <code>receipts</code> sú zablokované.
+      Pri odhlásení zo zariadenia sa lokálna vyrovnávacia pamäť faktúr vymaže.
+    </p>
+  </section>
+
+  <section>
+    <h2>5. Uchovávanie a vymazanie údajov</h2>
+    <p>
+      Údaje uchovávame po dobu aktívneho používania účtu. Účet a všetky pridružené doklady môžete kedykoľvek natrvalo vymazať priamo v aplikácii
+      (<em>Nastavenia účtu &rarr; Vymazať účet a všetky dáta</em>) alebo podľa postupu na stránke
+      <a href="./account-deletion.html">Vymazanie účtu a údajov</a>.
+      Ak ste uskutočnili platený nákup cez Google Play, nevyhnutné daňové a proti-podvodné záznamy transakcií môžu byť po anonymizácii uchovávané v rozsahu vyžadovanom právnymi predpismi a ochranou pred zneužitím tokenov.
+    </p>
+  </section>
+
+  <section>
+    <h2>6. Vaše práva</h2>
+    <p>
+      Podľa nariadenia GDPR máte právo na prístup k svojim údajom, opravu (priamo v detaile dokladu v aplikácii), výmaz, obmedzenie spracúvania, prenosnosť údajov (export do PDF) a podanie sťažnosti na Úrad na ochranu osobných údajov SR.
+    </p>
+  </section>
+</body>
+</html>

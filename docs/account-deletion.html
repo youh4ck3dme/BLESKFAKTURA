@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vymazanie účtu a údajov — Blesková Faktúra</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.65;
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+      color: #1c1b1f;
+      background: #faf9fc;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { color: #e6e1e5; background: #141218; }
+      section { background: #1d1b20 !important; border-color: #36343b !important; }
+      .cta { background: #4f378b !important; color: #ffffff !important; }
+    }
+    h1 { font-size: 1.9rem; margin-bottom: 0.25rem; }
+    .meta { color: #6750a4; font-weight: 600; margin-bottom: 24px; }
+    section {
+      background: #ffffff;
+      border: 1px solid #e6e1ea;
+      border-radius: 16px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .cta {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 12px 20px;
+      border-radius: 12px;
+      background: #6750a4;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    code { background: rgba(103, 80, 164, 0.12); padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Vymazanie účtu a údajov</h1>
+  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>)</p>
+
+  <section>
+    <h2>1. Okamžité vymazanie priamo v aplikácii (odporúčané)</h2>
+    <ol>
+      <li>Otvorte aplikáciu <strong>Blesková Faktúra</strong> a prihláste sa do svojho účtu Google.</li>
+      <li>Na spodnej lište otvorte kartu <strong>Nastavenia</strong>.</li>
+      <li>V sekcii <strong>Nebezpečná zóna</strong> kliknite na <strong>Vymazať účet a všetky dáta</strong> a potvrďte dialóg.</li>
+    </ol>
+    <p>Výmaz prebehne okamžite bez čakacej lehoty a odhlási vaše zariadenie.</p>
+  </section>
+
+  <section>
+    <h2>2. Žiadosť o vymazanie účtu cez web / e-mail (ak už nemáte zariadenie)</h2>
+    <p>
+      Ak ste aplikáciu odinštalovali alebo nemáte prístup k telefónu, požiadajte o vymazanie vášho účtu a cloudových záznamov zaslaním požiadavky z e-mailovej adresy priradenej k účtu Google:
+    </p>
+    <a class="cta" href="mailto:erikbabcan@gmail.com?subject=%C5%BDiados%C5%A5%20o%20vymazanie%20%C3%BA%C4%8Dtu%20%E2%80%94%20Bleskov%C3%A1%20Fakt%C3%BAra&body=Dobr%C3%BD%20de%C5%88%2C%0A%0A%C5%BEiadam%20o%20trval%C3%A9%20vymazanie%20m%C3%B4jho%20%C3%BA%C4%8Dtu%20v%20aplik%C3%A1cii%20Bleskov%C3%A1%20Fakt%C3%BAra%20(sk.bizagent.bleskovafaktura)%20vr%C3%A1tane%20v%C5%A1etk%C3%BDch%20cloudov%C3%BDch%20dokladov%20a%20%C5%A1tatist%C3%ADk.%0A%0APrihlasovac%C3%AD%20e-mail%20(Google)%3A%20%0A">
+      Odoslať žiadosť o vymazanie účtu
+    </a>
+    <p><small>Žiadosti cez web/e-mail spracúvame po overení vlastníctva e-mailu najneskôr do 14 dní.</small></p>
+  </section>
+
+  <section>
+    <h2>3. Rozsah mazaných a uchovávaných údajov</h2>
+    <ul>
+      <li><strong>Okamžite a trvalo zmazané dáta:</strong> účet Firebase Authentication, používateľský profil <code>users/{uid}</code> (kredity, súčty, stav), celá podkolekcia dokladov <code>users/{uid}/invoices/*</code>, lokálna Room databáza, archivované fotografie dokladov v zariadení a dočasné PDF súbory.</li>
+      <li><strong>Možné obmedzené uchovanie:</strong> ak používateľ realizoval platené nákupy cez Google Play, technický hash overeného nákupného tokenu (<code>billingTokens</code> bez účtovných dokladov) a účtovný doklad poskytovateľa platby môžu byť uchované po zákonom stanovenú alebo bezpečnostnú dobu na prevenciu zneužitia platieb a splnenie daňových povinností.</li>
+    </ul>
+  </section>
+</body>
+</html>

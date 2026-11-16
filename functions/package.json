@@ -1,0 +1,23 @@
+{
+  "name": "bleskova-faktura-functions",
+  "private": true,
+  "description": "Server-side Google Play Billing verifier and RTDN webhook for Bleskova Faktura",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-strip-types --test test/verifier.test.mjs",
+    "deploy": "npm run build && firebase deploy --only functions"
+  },
+  "engines": {
+    "node": "22"
+  },
+  "main": "lib/index.js",
+  "dependencies": {
+    "firebase-admin": "^13.2.0",
+    "firebase-functions": "^6.3.2",
+    "googleapis": "^148.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.3"
+  }
+}
