@@ -161,7 +161,7 @@ fun DashboardScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.AccountBalanceWallet,
-                            contentDescription = "Predplatné",
+                            contentDescription = if (viewModel.isInternalTesting) "O internej verzii" else "Predplatné",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -218,8 +218,8 @@ fun DashboardScreen(
                 NavigationBarItem(
                     selected = false,
                     onClick = onNavigateToPricing,
-                    icon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Predplatné") },
-                    label = { Text("Predplatné") }
+                    icon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = if (viewModel.isInternalTesting) "Interný test" else "Predplatné") },
+                    label = { Text(if (viewModel.isInternalTesting) "Interný test" else "Predplatné") }
                 )
                 NavigationBarItem(
                     selected = false,
@@ -340,7 +340,7 @@ fun DashboardScreen(
                                     .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = if (userStats.isSubscribed) "Blesk Premium" else "${userStats.credits} kreditov",
+                                    text = if (viewModel.isInternalTesting) "Interný test" else if (userStats.isSubscribed) "Blesk Premium" else "${userStats.credits} kreditov",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onPrimary
                                 )
@@ -409,7 +409,7 @@ fun DashboardScreen(
 
                             Column {
                                 Text(
-                                    text = "Skenuj AI",
+                                    text = if (viewModel.isInternalTesting) "Prečítať doklad" else "Skenuj AI",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
@@ -447,7 +447,7 @@ fun DashboardScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.AccountBalanceWallet,
-                                    contentDescription = "Predplatné",
+                                    contentDescription = if (viewModel.isInternalTesting) "O internej verzii" else "Predplatné",
                                     tint = MaterialTheme.colorScheme.tertiaryContainer,
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -455,12 +455,12 @@ fun DashboardScreen(
 
                             Column {
                                 Text(
-                                    text = "Predplatné",
+                                    text = if (viewModel.isInternalTesting) "Interné testovanie" else "Predplatné",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
                                     color = MaterialTheme.colorScheme.onTertiaryContainer
                                 )
                                 Text(
-                                    text = "AI Kredity & Balíky",
+                                    text = if (viewModel.isInternalTesting) "Lokálne OCR bez nákupov" else "AI Kredity & Balíky",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f)
                                 )
@@ -473,7 +473,7 @@ fun DashboardScreen(
             // Bento Cell 4: Scanner Quota Card (BF-33)
             item {
                 val creditCapacity = maxOf(10, userStats.credits)
-                val creditPercent = if (userStats.isSubscribed) 100 else (userStats.credits * 100) / creditCapacity
+                val creditPercent = if (viewModel.isInternalTesting || userStats.isSubscribed) 100 else (userStats.credits * 100) / creditCapacity
 
                 Card(
                     modifier = Modifier
@@ -494,7 +494,7 @@ fun DashboardScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "STAV AI SKENERA",
+                                text = if (viewModel.isInternalTesting) "ČÍTANIE DOKLADOV" else "STAV AI SKENERA",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.ExtraBold,
                                     letterSpacing = 1.sp
@@ -508,7 +508,7 @@ fun DashboardScreen(
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = "AI AKTÍVNE",
+                                    text = if (viewModel.isInternalTesting) "LOKÁLNE OCR" else "AI AKTÍVNE",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 10.sp
@@ -526,7 +526,9 @@ fun DashboardScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (userStats.isSubscribed) {
+                                text = if (viewModel.isInternalTesting) {
+                                    "Interný test bez kreditov"
+                                } else if (userStats.isSubscribed) {
                                     "Blesk Premium (Neobmedzene)"
                                 } else {
                                     "Kredity: ${userStats.credits} skenov zostáva"
@@ -545,7 +547,7 @@ fun DashboardScreen(
 
                         LinearProgressIndicator(
                             progress = {
-                                if (userStats.isSubscribed) 1.0f
+                                if (viewModel.isInternalTesting || userStats.isSubscribed) 1.0f
                                 else (userStats.credits.toFloat() / creditCapacity.toFloat()).coerceIn(0f, 1f)
                             },
                             modifier = Modifier
@@ -567,7 +569,7 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Slovenské účtovníctvo a DPH (23%, 20%, 10%, 5%)",
+                                text = "Údaje a DPH pred uložením vždy skontrolujte",
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

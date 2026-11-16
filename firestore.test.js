@@ -1,13 +1,16 @@
+const { createRequire } = require("node:module");
+const path = require("node:path");
+const requireFunctions = createRequire(path.join(__dirname, "functions", "package.json"));
 const {
   initializeTestEnvironment,
   assertFails,
   assertSucceeds,
-} = require("@firebase/rules-unit-testing");
+} = requireFunctions("@firebase/rules-unit-testing");
 const { test, before, after, beforeEach } = require("node:test");
 const fs = require("node:fs");
 
 let testEnv;
-const PROJECT_ID = process.env.GCP_PROJECT || "demo-no-project";
+const PROJECT_ID = "demo-bleskova-faktura";
 const ALICE_UID = "alice_szco_01";
 const BOB_UID = "bob_szco_02";
 
@@ -53,7 +56,7 @@ function validInvoiceDoc(uid) {
 }
 
 before(async () => {
-  const rules = fs.readFileSync("./firestore.rules", "utf8");
+  const rules = fs.readFileSync(path.join(__dirname, "firestore.rules"), "utf8");
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: {
@@ -277,4 +280,40 @@ test("Invoice validation: rejects negative totalAmount, unknown category, and gh
       updatedAt: new Date(Date.now() - 100),
     })
   );
+});
+
+test("Internal free scanning: invoices and totals sync without spending or granting credits", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const userRef = aliceDb.collection("users").doc(ALICE_UID);
+  await assertSucceeds(userRef.set(starterUserDoc(ALICE_UID)));
+  // More scans than the starter credit count demonstrates that normal invoice sync
+  // does not depend on the optional paid scan-reservation mechanism or Functions.
+  for (let i = 0; i < 12; i += 1) {
+    await assertSucceeds(userRef.collection("invoices").doc(`internal-${i}`).set(validInvoiceDoc(ALICE_UID)));
+  }
+  await assertSucceeds(userRef.update({
+    totalInvoiced: 550.8,
+    totalInvoicedCents: 55080,
+    invoiceCount: 12,
+    updatedAt: new Date(Date.now() - 50),
+  }));
+  const profile = await userRef.get();
+  if (profile.get("credits") !== 10 || profile.get("isSubscribed") !== false) {
+    throw new Error("Free invoice sync changed the paid entitlement");
+  }
+});
+
+test("Account deletion: owner can delete invoices and profile, another user cannot", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const userRef = aliceDb.collection("users").doc(ALICE_UID);
+  await assertSucceeds(userRef.set(starterUserDoc(ALICE_UID)));
+  const invoiceRef = userRef.collection("invoices").doc("deletion-invoice");
+  await assertSucceeds(invoiceRef.set(validInvoiceDoc(ALICE_UID)));
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).delete());
+  await assertSucceeds(invoiceRef.delete());
+  await assertSucceeds(userRef.delete());
+  const invoices = await userRef.collection("invoices").get();
+  const profile = await userRef.get();
+  if (!invoices.empty || profile.exists) throw new Error("Account data remained after deletion");
 });

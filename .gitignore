@@ -20,3 +20,10 @@ debug.keystore
 *.keystore
 key.properties
 *-debug.log
+node_modules/
+functions/lib/
+hosting/legal/
+app/google-services.json
+/.local-tools/
+__pycache__/
+*.pyc

@@ -247,7 +247,7 @@ fun ScanScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Bleskový AI skener", fontWeight = FontWeight.Bold) },
+                title = { Text(if (viewModel.isInternalTesting) "Čítačka dokladov" else "Bleskový AI skener", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -345,7 +345,7 @@ fun ScanScreen(
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
-                                        text = "Doklad bol pripravený v plnom rozlíšení. Spustite AI analýzu nižšie.",
+                                        text = "Obrázok je pripravený. Spustite čítanie údajov nižšie.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         fontWeight = FontWeight.Medium
@@ -468,12 +468,12 @@ fun ScanScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = "AI analýza",
+                                            contentDescription = "Čítanie dokladu",
                                             tint = MaterialTheme.colorScheme.onPrimary
                                         )
                                         Spacer(modifier = Modifier.width(10.dp))
                                         Text(
-                                            text = "Extrahovať dáta pomocou AI",
+                                            text = if (viewModel.isInternalTesting) "Prečítať údaje v zariadení" else "Extrahovať dáta pomocou AI",
                                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                                         )
                                     }
@@ -562,18 +562,18 @@ fun ScanScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = "AI",
+                                            contentDescription = "Čítanie údajov",
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "Umelá inteligencia Blesk",
+                                            text = if (viewModel.isInternalTesting) "Lokálne OCR dokladov" else "Umelá inteligencia Blesk",
                                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = "Odfoťte pokladničný blok alebo faktúru. AI prečíta text, sumu, DPH, IČO aj kategóriu.",
+                                            text = if (viewModel.isInternalTesting) "Odfoťte celý bloček alebo faktúru. OCR navrhne údaje; chýbajúce hodnoty a DPH pred uložením doplňte a skontrolujte." else "Odfoťte pokladničný blok alebo faktúru. AI navrhne údaje na vašu kontrolu.",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -679,14 +679,14 @@ fun ScanScreen(
                                     }
                                 }
 
-                                if (BuildConfig.DEBUG) {
+                                if (BuildConfig.DEBUG || viewModel.isInternalTesting) {
                                     Button(
                                         onClick = {
                                             val bitmap = generateSampleReceiptBitmap()
                                             stagedUriString = null
                                             stagedBitmap = bitmap
-                                            stagedFileName = "vzorovy_tesco_doklad.png"
-                                            stagedFileSize = "23.4 KB"
+                                            stagedFileName = "ukazkovy_doklad.png"
+                                            stagedFileSize = "Ukážka"
                                         },
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -704,7 +704,7 @@ fun ScanScreen(
                                         ) {
                                             Icon(imageVector = Icons.Default.Receipt, contentDescription = "Vzor")
                                             Spacer(modifier = Modifier.width(10.dp))
-                                            Text("Simulovať vzorový doklad (Tesco)", fontWeight = FontWeight.Bold)
+                                            Text("Vyskúšať ukážkový doklad", fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -772,10 +772,18 @@ fun ScanScreen(
                             isSaving = true
                             stagedUriString = null
                             stagedBitmap = null
-                            viewModel.saveScannedInvoice(invoice, state.bitmap) {
-                                isSaving = false
-                                onNavigateBack()
-                            }
+                            viewModel.saveScannedInvoice(
+                                invoice = invoice,
+                                bitmap = state.bitmap,
+                                onSaved = {
+                                    isSaving = false
+                                    onNavigateBack()
+                                },
+                                onError = { message ->
+                                    isSaving = false
+                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                }
+                            )
                         }
                     )
                 }
@@ -849,20 +857,17 @@ fun ReviewScannedInvoiceForm(
     val initialTotalCents = remember(extracted) {
         SlovakFinanceUtils.doubleToCents(extracted.totalAmount)
     }
-    val initialVatRate = remember(extracted) {
-        extracted.vatRate ?: 20.0
-    }
+    val initialVatRate = remember(extracted) { extracted.vatRate }
     val initialVatCents = remember(extracted) {
         extracted.vatAmount?.let { SlovakFinanceUtils.doubleToCents(it) }
-            ?: SlovakFinanceUtils.calculateVatCentsFromGross(initialTotalCents, BigDecimal.valueOf(initialVatRate))
     }
 
     var supplierName by rememberSaveable { mutableStateOf(extracted.supplierName) }
     var ico by rememberSaveable { mutableStateOf(extracted.ico ?: "") }
     var dic by rememberSaveable { mutableStateOf(extracted.dic ?: "") }
     var totalAmountStr by rememberSaveable { mutableStateOf(SlovakFinanceUtils.formatCentsForInput(initialTotalCents)) }
-    var vatRateStr by rememberSaveable { mutableStateOf(initialVatRate.toString().replace('.', ',')) }
-    var vatAmountStr by rememberSaveable { mutableStateOf(SlovakFinanceUtils.formatCentsForInput(initialVatCents)) }
+    var vatRateStr by rememberSaveable { mutableStateOf(initialVatRate?.toString()?.replace('.', ',').orEmpty()) }
+    var vatAmountStr by rememberSaveable { mutableStateOf(initialVatCents?.let(SlovakFinanceUtils::formatCentsForInput).orEmpty()) }
     var issueDate by rememberSaveable { mutableStateOf(extracted.issueDate) }
     var dueDate by rememberSaveable { mutableStateOf("") }
     var isPaid by rememberSaveable { mutableStateOf(true) }
@@ -912,12 +917,12 @@ fun ReviewScannedInvoiceForm(
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
                         Text(
-                            text = "AI extrakcia úspešná",
+                            text = if (BuildConfig.INTERNAL_TESTING) "Výsledok lokálneho OCR" else "Výsledok AI extrakcie",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Skontrolujte extrahovanú sumu, DPH a splatnosť pred uložením.",
+                            text = "Pred uložením skontrolujte dodávateľa, dátum, sumu a DPH. Nezistené údaje doplňte ručne.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold
@@ -984,7 +989,7 @@ fun ReviewScannedInvoiceForm(
                 OutlinedTextField(
                     value = totalAmountStr,
                     onValueChange = { totalAmountStr = it; validationError = null },
-                    label = { Text("Suma s DPH (€)") },
+                    label = { Text("Celková suma (€)") },
                     modifier = Modifier.weight(1.1f).testTag("scanned_amount_input"),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1165,7 +1170,7 @@ fun ReviewScannedInvoiceForm(
                         val totalCents = SlovakFinanceUtils.bigDecimalToCents(parsedAmount)
 
                         val parsedRate = SlovakFinanceUtils.parseSlovakDecimal(vatRateStr)
-                        if (parsedRate == null || parsedRate < BigDecimal.ZERO || parsedRate > BigDecimal(100)) {
+                        if (vatRateStr.isNotBlank() && (parsedRate == null || parsedRate < BigDecimal.ZERO || parsedRate > BigDecimal(100))) {
                             validationError = "Sadzba DPH musí byť v rozsahu 0 až 100 %."
                             return@Button
                         }
@@ -1208,7 +1213,7 @@ fun ReviewScannedInvoiceForm(
                                 dic = dic.trim().ifBlank { null },
                                 totalAmount = SlovakFinanceUtils.centsToDouble(totalCents),
                                 totalAmountCents = totalCents,
-                                vatRate = parsedRate.toDouble(),
+                                vatRate = parsedRate?.toDouble(),
                                 vatAmount = vatCents?.let { SlovakFinanceUtils.centsToDouble(it) },
                                 vatAmountCents = vatCents,
                                 issueDate = normalizedIssue,
@@ -1272,11 +1277,11 @@ fun generateSampleReceiptBitmap(): Bitmap {
     }
 
     var y = 40f
-    canvas.drawText("TESCO STORES SR, a.s.", 200f, y, titlePaint)
+    canvas.drawText("VZOROVY OBCHOD", 200f, y, titlePaint)
     y += 24f
-    canvas.drawText("Prevádzka: Kamenné Námestie, Bratislava", 200f, y, subtitlePaint)
+    canvas.drawText("UKAZKA - NIE JE DANOVY DOKLAD", 200f, y, subtitlePaint)
     y += 18f
-    canvas.drawText("IČO: 31321828  IČ DPH: SK2020300125", 200f, y, subtitlePaint)
+    canvas.drawText("IČO: 00000000  IČ DPH: SK0000000000", 200f, y, subtitlePaint)
     y += 25f
 
     paint.strokeWidth = 2f

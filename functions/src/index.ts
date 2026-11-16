@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
-import { google } from "googleapis";
+import { androidpublisher, auth as publisherAuth } from "@googleapis/androidpublisher";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onMessagePublished } from "firebase-functions/v2/pubsub";
 import * as logger from "firebase-functions/logger";
@@ -17,12 +17,13 @@ import {
 
 initializeApp();
 const db = getFirestore(FIRESTORE_DATABASE_ID);
+const BILLING_SERVICE_ACCOUNT = "blesk-billing@gen-lang-client-0115180408.iam.gserviceaccount.com";
 
 async function getAndroidPublisherClient() {
-  const auth = new google.auth.GoogleAuth({
+  const auth = new publisherAuth.GoogleAuth({
     scopes: ["https://www.googleapis.com/auth/androidpublisher"],
   });
-  return google.androidpublisher({ version: "v3", auth });
+  return androidpublisher({ version: "v3", auth });
 }
 
 const playClient: PlayDeveloperClient = {
@@ -38,6 +39,7 @@ const playClient: PlayDeveloperClient = {
       acknowledgementState: res.data.acknowledgementState ?? 0,
       consumptionState: res.data.consumptionState ?? 0,
       orderId: res.data.orderId ?? undefined,
+      obfuscatedExternalAccountId: res.data.obfuscatedExternalAccountId ?? undefined,
     };
   },
 
@@ -62,9 +64,10 @@ const playClient: PlayDeveloperClient = {
     return {
       subscriptionState: res.data.subscriptionState ?? "SUBSCRIPTION_STATE_UNSPECIFIED",
       acknowledgementState: res.data.acknowledgementState ?? undefined,
-      latestOrderId: res.data.latestOrderId ?? undefined,
+      latestOrderId: lineItem?.latestSuccessfulOrderId ?? undefined,
       expiryTimeMillis: Number.isFinite(expiryMillis) ? expiryMillis : undefined,
       productIdFromLineItems: lineItem?.productId ?? undefined,
+      obfuscatedExternalAccountId: res.data.externalAccountIdentifiers?.obfuscatedExternalAccountId ?? undefined,
     };
   },
 
@@ -88,6 +91,10 @@ const firestoreBillingStore: BillingStore = {
           const snap = await tx.get(db.collection("billingTokens").doc(tokenHash));
           return snap.exists ? (snap.data() as TokenRecord) : null;
         },
+        async userExists(uid) {
+          const snap = await tx.get(db.collection("users").doc(uid));
+          return snap.exists;
+        },
         setToken(tokenHash, record) {
           pendingTokenWrites.push({ refPath: `billingTokens/${tokenHash}`, record });
         },
@@ -95,18 +102,7 @@ const firestoreBillingStore: BillingStore = {
           const userRef = db.collection("users").doc(uid);
           const userSnap = await tx.get(userRef);
           if (!userSnap.exists) {
-            const initialCredits = Math.max(0, 10 + creditsDelta);
-            tx.set(userRef, {
-              userId: uid,
-              credits: initialCredits,
-              isSubscribed: false,
-              totalInvoiced: 0,
-              totalInvoicedCents: 0,
-              invoiceCount: 0,
-              activeReservationId: null,
-              createdAt: FieldValue.serverTimestamp(),
-              updatedAt: FieldValue.serverTimestamp(),
-            });
+            throw new VerificationError("failed-precondition", "App profile does not exist.");
           } else {
             const currentCredits = Number(userSnap.get("credits") ?? 0);
             const nextCredits = Math.max(0, currentCredits + creditsDelta);
@@ -120,18 +116,7 @@ const firestoreBillingStore: BillingStore = {
           const userRef = db.collection("users").doc(uid);
           const userSnap = await tx.get(userRef);
           if (!userSnap.exists) {
-            tx.set(userRef, {
-              userId: uid,
-              credits: 10,
-              isSubscribed,
-              subscriptionExpiryMillis: expiryMillis,
-              totalInvoiced: 0,
-              totalInvoicedCents: 0,
-              invoiceCount: 0,
-              activeReservationId: null,
-              createdAt: FieldValue.serverTimestamp(),
-              updatedAt: FieldValue.serverTimestamp(),
-            });
+            throw new VerificationError("failed-precondition", "App profile does not exist.");
           } else {
             tx.update(userRef, {
               isSubscribed,
@@ -156,8 +141,15 @@ const firestoreBillingStore: BillingStore = {
 export const verifyPlayPurchase = onCall(
   {
     region: "europe-west1",
+    serviceAccount: BILLING_SERVICE_ACCOUNT,
     enforceAppCheck: true,
     consumeAppCheckToken: false,
+    minInstances: 0,
+    maxInstances: 1,
+    memory: "256MiB",
+    cpu: "gcf_gen1",
+    concurrency: 1,
+    timeoutSeconds: 60,
   },
   async (request) => {
     const uid = request.auth?.uid;
@@ -191,6 +183,14 @@ export const handlePlayRtdn = onMessagePublished(
   {
     topic: "play-billing-rtdn",
     region: "europe-west1",
+    serviceAccount: BILLING_SERVICE_ACCOUNT,
+    minInstances: 0,
+    maxInstances: 1,
+    memory: "256MiB",
+    cpu: "gcf_gen1",
+    concurrency: 1,
+    timeoutSeconds: 60,
+    retry: true,
   },
   async (event) => {
     const rawJson = event.data.message.json as PlayRtdnNotification | undefined;

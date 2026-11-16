@@ -1,9 +1,14 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -50,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,6 +67,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ui.InvoiceViewModel
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,8 +79,6 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToPricing: () -> Unit
 ) {
-    BackHandler { onNavigateBack() }
-
     val context = LocalContext.current
     val supportEmail = stringResource(R.string.support_email)
     val privacyPolicyUrl = stringResource(R.string.privacy_policy_url).trim()
@@ -83,6 +91,9 @@ fun SettingsScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var isDeleting by remember { mutableStateOf(false) }
     var deleteErrorMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val isLocalProfile = currentUser?.uid?.startsWith("demo_") == true
+    BackHandler { if (!isDeleting) onNavigateBack() }
 
     val openSupportEmail = {
         val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
@@ -132,6 +143,7 @@ fun SettingsScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .testTag("settings_list")
                 .padding(innerPadding)
                 .padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -170,7 +182,9 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(14.dp))
 
                         Text(
-                            text = if (userStats.isSubscribed) {
+                            text = if (viewModel.isInternalTesting) {
+                                "Interné testovanie bez nákupov • Dokladov: ${userStats.invoiceCount}"
+                            } else if (userStats.isSubscribed) {
                                 "Tarifa: Blesk Premium (aktívne)"
                             } else {
                                 "Zostatok kreditov: ${userStats.credits} skenov • Dokladov: ${userStats.invoiceCount}"
@@ -190,7 +204,7 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(14.dp),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
                         ) {
-                            Text("Spravovať predplatné a kredity", fontWeight = FontWeight.Bold)
+                            Text(if (viewModel.isInternalTesting) "O internej verzii" else "Spravovať predplatné a kredity", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -221,7 +235,7 @@ fun SettingsScreen(
                             )
                         }
                         Text(
-                            text = "Vaše doklady sú uložené pod vaším Google účtom v izolovanom Firestore priestore a v súkromnom úložisku zariadenia (bez Android záloh). Snímky odoslané na AI vyťaženie sa nepoužívajú na reklamu.",
+                            text = if (viewModel.isInternalTesting) "Snímky sa čítajú priamo v zariadení. Lokálny profil ukladá údaje iba do zariadenia a zachová ich aj po odhlásení až do vymazania profilu. Pri prihlásení cez Google sa údaje dokladov synchronizujú do Firestore; snímky sa do cloudovej AI neposielajú." else "Doklady sa ukladajú do súkromného úložiska zariadenia a pri Google účte aj do Firestore. Snímky sa pri cloudovej AI extrakcii odošlú na spracovanie cez Firebase AI Logic.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -303,7 +317,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            text = "Trvalo odstráni váš profil, všetky faktúry v cloude aj na zariadení, lokálne snímky dokladov a účet Firebase Auth.",
+                            text = if (isLocalProfile) "Odstráni tento lokálny profil, uložené doklady a snímky zo zariadenia. Exporty uložené mimo aplikácie zostanú u ich príjemcov." else "Odstráni profil a doklady v cloude aj na zariadení, lokálne snímky a účet Firebase Auth. Vyžaduje sieť a nové overenie toho istého Google účtu. Exporty uložené mimo aplikácie zostanú u ich príjemcov.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
@@ -350,9 +364,13 @@ fun SettingsScreen(
                     Text(
                         "Blesková Faktúra (sk.bizagent.bleskovafaktura)\nKontakt: $supportEmail\n\n" +
                             "1. Spracúvané údaje: Google identifikátor účtu (UID, e-mail, meno), účtovné doklady (dodávateľ, IČO/DIČ, dátumy, sumy, DPH) a snímky dokladov.\n\n" +
-                            "2. Účel a bezpečnosť: Autentifikácia cez Google/Firebase Auth, cloudová synchronizácia vo Firestore (prístup prísne izolovaný na váš UID), jednorazová AI extrakcia cez Firebase AI Logic (chránené cez App Check / Play Integrity) a overenie nákupov Google Play Billing.\n\n" +
-                            "3. Uchovávanie (retencia): Účet a doklady uchovávame počas aktívneho používania; v aplikácii ich vymažete okamžite (do 14 dní pri e-mailovej žiadosti). Dočasné PDF exporty v cache sa čistia po 24 hodinách a pri odhlásení. Technický hash tokenu nákupu (billingTokens bez čísel kariet) sa môže uchovávať v zákonnej daňovej a proti-podvodnej lehote.\n\n" +
-                            "4. Výmaz údajov: Účet a dáta vymažete priamo tu v Nastaveniach alebo e-mailom na $supportEmail.",
+                            (if (viewModel.isInternalTesting) {
+                                "2. Spracovanie: Lokálne OCR pomocou pribaleného modelu ML Kit číta snímky v zariadení. Pri voliteľnom Google prihlásení slúži Firebase Auth na účet a Firestore na synchronizáciu údajov dokladov. Google SDK môžu spracúvať technické údaje podľa svojich zásad. Snímky sa neposielajú do cloudovej AI.\n\n"
+                            } else {
+                                "2. Spracovanie: Firebase Auth poskytuje Google prihlásenie, Firestore cloudovú synchronizáciu a Firebase AI Logic vyťaženie údajov zo snímok. Pri nákupoch sa používa Google Play Billing a serverové overenie.\n\n"
+                            }) +
+                            "3. Uchovávanie: Účet a doklady uchovávame počas používania. Dočasné PDF súbory sa čistia pri ďalšom exporte, odhlásení alebo výmaze.\n\n" +
+                            "4. Výmaz: Zmazanie môžete spustiť v Nastaveniach alebo požiadať na $supportEmail. Cloudový výmaz vyžaduje sieť a nové overenie účtu Google. Po chybe môžete operáciu zopakovať; aplikácia oznámi výsledok. Kópie PDF uložené alebo zdieľané mimo aplikácie musíte odstrániť samostatne.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -370,20 +388,45 @@ fun SettingsScreen(
             onDismissRequest = { if (!isDeleting) showDeleteConfirm = false },
             title = { Text("Natrvalo vymazať účet?", fontWeight = FontWeight.Bold) },
             text = {
-                Text("Táto akcia je nevratná. Všetky uložené doklady, štatistiky, zostávajúce kredity a snímky budú natrvalo odstránené.")
+                Text("Táto akcia je nevratná. Odstráni údaje tohto profilu. " + if (isLocalProfile) "Lokálny profil nie je účet Google." else "Na ďalšej obrazovke potvrďte ten istý účet Google: ${currentUser?.email.orEmpty()}. Ak máte predplatné z inej verzie, spravujte jeho zrušenie osobitne v Google Play.")
             },
             confirmButton = {
                 Button(
                     onClick = {
                         showDeleteConfirm = false
                         isDeleting = true
-                        viewModel.deleteAccount(
-                            onSuccess = { isDeleting = false },
-                            onError = { msg ->
+                        scope.launch {
+                            try {
+                                val idToken = if (isLocalProfile) null else {
+                                    val activity = context as? Activity
+                                        ?: throw IllegalStateException("Overenie účtu vyžaduje aktívne okno aplikácie.")
+                                    val clientId = context.getString(R.string.default_web_client_id)
+                                    val option = GetSignInWithGoogleOption.Builder(clientId).build()
+                                    val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
+                                    val credential = CredentialManager.create(context).getCredential(activity, request).credential
+                                    if (credential !is CustomCredential || credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                        throw IllegalStateException("Google nevrátil platné overenie účtu.")
+                                    }
+                                    GoogleIdTokenCredential.createFrom(credential.data).idToken
+                                }
+                                viewModel.deleteAccount(
+                                    onSuccess = { isDeleting = false },
+                                    onError = { msg ->
+                                        isDeleting = false
+                                        deleteErrorMessage = msg
+                                    },
+                                    reauthenticationIdToken = idToken
+                                )
+                            } catch (_: GetCredentialCancellationException) {
                                 isDeleting = false
-                                deleteErrorMessage = msg
+                            } catch (e: CancellationException) {
+                                isDeleting = false
+                                throw e
+                            } catch (e: Exception) {
+                                isDeleting = false
+                                deleteErrorMessage = e.localizedMessage ?: "Overenie účtu sa nepodarilo. Skúste to znova."
                             }
-                        )
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,

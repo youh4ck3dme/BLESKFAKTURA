@@ -1,41 +1,118 @@
-name: Android Release & Security CI
+name: Android internal verification
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   pull_request:
-    branches: [ main, master ]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: internal-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+      UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Setup Node.js and Firebase Tools
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Run Unit Tests & Android Lint
-        run: gradle :app:testDebugUnitTest :app:lintDebug --console=plain
-
-      - name: Build Signed Release AAB (when upload keystore secrets are configured)
-        if: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
+      - uses: android-actions/setup-android@v3
+      - name: Install Android build SDK
+        run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare Firebase config for compilation
+        run: node scripts/prepare-ci-config.mjs
+      - name: Unit tests, lint and internal debug APK
+        run: ./gradlew :app:testInternalDebugUnitTest :app:lintInternalDebug :app:lintInternalRelease :app:assembleInternalDebug --no-daemon --console=plain
+      - name: Build upload-signed internal AAB
+        if: ${{ env.GOOGLE_SERVICES_JSON != '' && env.UPLOAD_KEYSTORE_BASE64 != '' }}
         env:
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEYSTORE_PATH: ${{ runner.temp }}/my-upload-key.jks
+          KEYSTORE_PATH: ${{ runner.temp }}/upload.jks
         run: |
-          echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 -d > "$KEYSTORE_PATH"
-          gradle :app:bundleRelease --console=plain
+          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          ./gradlew :app:bundleInternalRelease --no-daemon --console=plain
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-verification
+          path: |
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: warn
+      - name: Upload signed internal bundle and mapping
+        if: ${{ success() && env.GOOGLE_SERVICES_JSON != '' && env.UPLOAD_KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: internal-play-upload
+          path: |
+            app/build/outputs/bundle/internalRelease/*.aab
+            app/build/outputs/mapping/internalRelease/mapping.txt
+          if-no-files-found: error
+
+  device:
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: node scripts/prepare-ci-config.mjs
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Real on-device OCR and local workflow
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: ./gradlew :app:connectedInternalDebugAndroidTest --no-daemon --console=plain
+      - name: Upload device reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-device-reports
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: functions/pnpm-lock.yaml
+      - run: pnpm --dir functions install --frozen-lockfile
+      - run: pnpm --dir functions test

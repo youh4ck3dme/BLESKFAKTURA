@@ -8,12 +8,14 @@ import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
+import com.example.data.ScanAccessPolicy
 import com.example.data.AiExtractionResult
 import com.example.data.BillingProduct
 import com.example.data.CreditReservationResult
 import com.example.data.ExtractedInvoiceJson
 import com.example.data.Invoice
-import com.example.data.InvoiceAiService
+import com.example.data.InvoiceExtractionProvider
 import com.example.data.InvoiceRepository
 import com.example.data.PlayBillingManager
 import com.example.data.PlayBillingUiState
@@ -46,13 +48,15 @@ sealed interface ScanUiState {
 @OptIn(ExperimentalCoroutinesApi::class)
 class InvoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = InvoiceRepository(application)
-    private val playBillingManager = PlayBillingManager(application)
+    private val playBillingManager = if (BuildConfig.INTERNAL_TESTING) null else PlayBillingManager(application)
+    private val scanAccessPolicy = ScanAccessPolicy(BuildConfig.INTERNAL_TESTING)
+    val isInternalTesting: Boolean = BuildConfig.INTERNAL_TESTING
 
     val currentUser: StateFlow<UserInfo?> = repository.currentUser
     val syncError: StateFlow<String?> = repository.syncError
 
-    val billingState: StateFlow<PlayBillingUiState> = playBillingManager.billingState
-    val catalogPrices: StateFlow<Map<String, String>> = playBillingManager.catalogPrices
+    val billingState: StateFlow<PlayBillingUiState> = playBillingManager?.billingState ?: MutableStateFlow<PlayBillingUiState>(PlayBillingUiState.Idle).asStateFlow()
+    val catalogPrices: StateFlow<Map<String, String>> = playBillingManager?.catalogPrices ?: MutableStateFlow<Map<String, String>>(emptyMap()).asStateFlow()
 
     val invoices: StateFlow<List<Invoice>> = currentUser
         .flatMapLatest { user ->
@@ -138,13 +142,14 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteAccount(
         onSuccess: () -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        reauthenticationIdToken: String? = null
     ) {
         activeScanJob?.cancel()
         activeScanJob = null
         _scanState.value = ScanUiState.Idle
         viewModelScope.launch {
-            val result = repository.deleteAccount()
+            val result = repository.deleteAccount(reauthenticationIdToken = reauthenticationIdToken)
             if (result.isSuccess) {
                 withContext(NonCancellable) {
                     runCatching {
@@ -171,18 +176,30 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
     fun saveScannedInvoice(
         invoice: Invoice,
         bitmap: Bitmap?,
-        onSaved: () -> Unit
+        onSaved: () -> Unit,
+        onError: (String) -> Unit = {}
     ) {
         viewModelScope.launch {
-            val archivedPath = if (bitmap != null) {
-                ReceiptImageProcessor.archiveReceiptBitmap(getApplication(), bitmap, invoice.id)
-            } else {
-                null
+            try {
+                val archivedPath = if (bitmap != null) {
+                    ReceiptImageProcessor.archiveReceiptBitmap(getApplication(), bitmap, invoice.id)
+                        ?: throw IllegalStateException("Snímku dokladu sa nepodarilo uložiť do zariadenia.")
+                } else {
+                    null
+                }
+                val finalInvoice = invoice.copy(imageUrl = archivedPath ?: invoice.imageUrl)
+                val result = repository.insertInvoice(finalInvoice)
+                if (result.isFailure) {
+                    // The repository keeps a local copy and exposes the cloud error on the dashboard.
+                    Log.w("InvoiceViewModel", "Invoice saved locally; cloud synchronization pending")
+                }
+                _scanState.value = ScanUiState.Idle
+                onSaved()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.localizedMessage ?: "Doklad sa nepodarilo uložiť. Skúste to znova.")
             }
-            val finalInvoice = invoice.copy(imageUrl = archivedPath ?: invoice.imageUrl)
-            repository.insertInvoice(finalInvoice)
-            _scanState.value = ScanUiState.Idle
-            onSaved()
         }
     }
 
@@ -194,7 +211,11 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
 
     // --- Scanner / AI Extraction Actions ---
 
-    private val scannerMessages = listOf(
+    private val scannerMessages = if (isInternalTesting) listOf(
+        "Čítam text priamo v zariadení...",
+        "Hľadám dodávateľa, dátum a celkovú sumu...",
+        "Pripravujem údaje na vašu kontrolu..."
+    ) else listOf(
         "Blesk štartuje AI analyzátor...",
         "Čítame drobné písmo na doklade...",
         "Počítame DPH a celkovú sumu...",
@@ -219,12 +240,12 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
         }
 
         activeScanJob = viewModelScope.launch {
-            _scanState.value = ScanUiState.Scanning("Bleskovo kontrolujem kredity...")
+            _scanState.value = ScanUiState.Scanning(if (isInternalTesting) "Pripravujem analýzu dokladu..." else "Bleskovo kontrolujem kredity...")
 
-            val reservation = repository.reserveScanCredit(requestUid)
+            val reservation = scanAccessPolicy.reserve(requestUid, repository::reserveScanCredit)
             val reservationId = when (reservation) {
                 is CreditReservationResult.Reserved -> reservation.reservationId
-                is CreditReservationResult.UnlimitedSubscriber -> null
+                is CreditReservationResult.UnlimitedSubscriber, CreditReservationResult.FreeInternalTest -> null
                 is CreditReservationResult.InsufficientCredits -> {
                     if (currentUser.value?.uid == requestUid) {
                         _scanState.value = ScanUiState.Error(
@@ -253,7 +274,7 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
             }
 
             try {
-                val result = InvoiceAiService.extractInvoiceData(bitmap)
+                val result = InvoiceExtractionProvider.extractInvoiceData(bitmap)
 
                 // Guard against account switch / signOut during async network call (BF-08)
                 if (currentUser.value?.uid != requestUid) {
@@ -285,7 +306,7 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
                         }
                         val refundNote = if (reservationId != null) " Kredit bol vrátený." else ""
                         _scanState.value = ScanUiState.Error(
-                            "AI analýza vypršala po 60 sekundách. Skúste to prosím znova.$refundNote"
+                            "Spracovanie dokladu trvalo príliš dlho. Skúste to prosím znova.$refundNote"
                         )
                     }
                     is AiExtractionResult.ServiceError -> {
@@ -324,24 +345,24 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
     // --- Google Play Billing (BF-03) ---
 
     fun startBillingConnection() {
-        playBillingManager.startConnection()
+        playBillingManager?.startConnection()
     }
 
     fun launchBillingPurchase(activity: Activity?, product: BillingProduct) {
-        playBillingManager.launchPurchase(activity, product)
+        playBillingManager?.launchPurchase(activity, product)
     }
 
     fun retryPendingBillingVerifications() {
-        playBillingManager.retryPendingVerifications()
+        playBillingManager?.retryPendingVerifications()
     }
 
     fun clearBillingMessage() {
-        playBillingManager.clearMessage()
+        playBillingManager?.clearMessage()
     }
 
     override fun onCleared() {
         super.onCleared()
-        playBillingManager.endConnection()
+        playBillingManager?.endConnection()
         repository.stopCloudSync()
     }
 }

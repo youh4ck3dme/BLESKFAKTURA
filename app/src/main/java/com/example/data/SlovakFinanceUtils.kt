@@ -5,6 +5,7 @@ import java.math.RoundingMode
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
+import java.text.ParsePosition
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -100,11 +101,9 @@ object SlovakFinanceUtils {
                 isLenient = false
                 timeZone = utcZone
             }
-            val parsed: Date = try {
-                parser.parse(trimmed)
-            } catch (_: Exception) {
-                null
-            } ?: continue
+            val position = ParsePosition(0)
+            val parsed: Date = parser.parse(trimmed, position) ?: continue
+            if (position.index != trimmed.length) continue
 
             val outFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
                 timeZone = utcZone

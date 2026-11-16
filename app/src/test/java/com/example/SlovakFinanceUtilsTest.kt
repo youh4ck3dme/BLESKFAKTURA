@@ -35,6 +35,8 @@ class SlovakFinanceUtilsTest {
         assertEquals(2026 to 11, SlovakFinanceUtils.extractYearMonth("16.11.2026"))
         assertNull(SlovakFinanceUtils.normalizeIsoDate("31.02.2026"))
         assertNull(SlovakFinanceUtils.normalizeIsoDate("1800-01-01"))
+        assertNull(SlovakFinanceUtils.normalizeIsoDate("16.11.2026-extra"))
+        assertNull(SlovakFinanceUtils.normalizeIsoDate("2026-11-16 12:00"))
     }
 
     @Test

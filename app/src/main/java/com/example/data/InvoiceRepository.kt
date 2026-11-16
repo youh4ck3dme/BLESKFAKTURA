@@ -6,15 +6,20 @@ import com.example.BuildConfig
 import com.example.R
 import com.example.ui.PdfExporter
 import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +46,7 @@ data class UserInfo(
 sealed interface CreditReservationResult {
     data class Reserved(val reservationId: String) : CreditReservationResult
     data object UnlimitedSubscriber : CreditReservationResult
+    data object FreeInternalTest : CreditReservationResult
     data object InsufficientCredits : CreditReservationResult
     data object ScanAlreadyInProgress : CreditReservationResult
 }
@@ -139,7 +145,6 @@ class InvoiceRepository(
                 photoUrl = firebaseUser.photoUrl?.toString()
             )
             _currentUser.value = userInfo
-            initializeUserStats(userInfo.uid)
             Result.success(userInfo)
         } catch (e: CancellationException) {
             throw e
@@ -150,21 +155,19 @@ class InvoiceRepository(
     }
 
     fun signInDemoUser() {
-        if (!BuildConfig.DEBUG) {
-            Log.w(TAG, "Demo sign-in blocked in release builds.")
+        if (!BuildConfig.DEBUG && !BuildConfig.INTERNAL_TESTING) {
+            Log.w(TAG, "Local sign-in blocked in production release builds.")
             return
         }
         stopCloudSync()
+        firebaseAuth?.signOut()
         val demoUser = UserInfo(
             uid = DEMO_USER_ID,
-            email = "demo@bleskovafaktura.local",
-            displayName = "Demo Živnostník",
+            email = null,
+            displayName = "Lokálny používateľ",
             photoUrl = null
         )
         _currentUser.value = demoUser
-        repositoryScope.launch {
-            initializeUserStats(demoUser.uid)
-        }
     }
 
     suspend fun signOutAndClearLocalCache() = withContext(Dispatchers.IO) {
@@ -176,7 +179,10 @@ class InvoiceRepository(
         } catch (e: Exception) {
             Log.e(TAG, "Error signing out from Firebase", e)
         }
-        if (oldUid != null) {
+        if (oldUid != null && !oldUid.startsWith("demo_")) {
+            invoiceDao.getInvoicesForUserOnce(oldUid).forEach {
+                ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl)
+            }
             invoiceDao.deleteAllForUser(oldUid)
             userStatsDao.deleteUserStats(oldUid)
         }
@@ -195,7 +201,10 @@ class InvoiceRepository(
         }
         _currentUser.value = null
         repositoryScope.launch {
-            if (oldUid != null) {
+            if (oldUid != null && !oldUid.startsWith("demo_")) {
+                invoiceDao.getInvoicesForUserOnce(oldUid).forEach {
+                    ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl)
+                }
                 invoiceDao.deleteAllForUser(oldUid)
                 userStatsDao.deleteUserStats(oldUid)
             }
@@ -660,50 +669,67 @@ class InvoiceRepository(
 
     // --- Account Deletion (BF-17) ---
 
-    suspend fun deleteAccount(targetUid: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun deleteAccount(
+        targetUid: String? = null,
+        reauthenticationIdToken: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         val uid = targetUid ?: _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid
             ?: return@withContext Result.failure(IllegalStateException("Žiadny prihlásený účet na vymazanie."))
-
-        stopCloudSync()
-
-        // 1. Delete archived receipt photos & Room records for uid
-        val localInvoices = invoiceDao.getInvoicesForUserOnce(uid)
-        localInvoices.forEach { ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl) }
-        invoiceDao.deleteAllForUser(uid)
-        userStatsDao.deleteUserStats(uid)
-        clearTempCacheDirectories()
-
-        // 2. Delete Firestore subcollection documents + user profile document
-        val db = firestoreDb
-        val isCloudUser = isFirebaseReady && !uid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == uid
-        if (isCloudUser && db != null) {
-            val userRef = db.collection("users").document(uid)
-            try {
-                val cloudInvoices = userRef.collection("invoices").get().await()
-                cloudInvoices.documents.forEach { doc ->
-                    doc.reference.delete().await()
-                }
-                userRef.delete().await()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                handleFirestoreError(e, OperationType.DELETE, userRef.path, firebaseAuth)
-                return@withContext Result.failure(e)
-            }
-
-            // 3. Delete Firebase Auth account
-            try {
-                firebaseAuth?.currentUser?.delete()?.await()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "FirebaseAuth user deletion failed", e)
-                return@withContext Result.failure(e)
-            }
+        val isLocalUser = uid.startsWith("demo_")
+        val db = if (isLocalUser) null else firestoreDb
+        val authUser = if (isLocalUser) null else firebaseAuth?.currentUser
+        if (!isLocalUser && (db == null || authUser?.uid != uid)) {
+            return@withContext Result.failure(IllegalStateException("Pred výmazom sa prihláste do správneho účtu Google."))
         }
 
-        _currentUser.value = null
-        Result.success(Unit)
+        stopCloudSync()
+        try {
+            if (db != null && authUser != null) {
+                withTimeout(60_000L) {
+                    // Re-authenticate before deleting any data, so an expired login is harmless.
+                    if (!reauthenticationIdToken.isNullOrBlank()) {
+                        authUser.reauthenticate(GoogleAuthProvider.getCredential(reauthenticationIdToken, null)).await()
+                    }
+                    val userRef = db.collection("users").document(uid)
+                    // Server reads ensure an offline cache cannot report an incomplete deletion as complete.
+                    while (true) {
+                        val batch = userRef.collection("invoices").limit(250).get(Source.SERVER).await()
+                        if (batch.isEmpty) break
+                        val writes = db.batch()
+                        batch.documents.forEach { writes.delete(it.reference) }
+                        writes.commit().await()
+                    }
+                    userRef.delete().await()
+                    authUser.delete().await()
+                }
+            }
+            // Keep local receipts and records until the cloud/Auth steps have succeeded.
+            withContext(NonCancellable) {
+                val localInvoices = invoiceDao.getInvoicesForUserOnce(uid)
+                localInvoices.forEach { ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl) }
+                invoiceDao.deleteAllForUser(uid)
+                userStatsDao.deleteUserStats(uid)
+                clearTempCacheDirectories()
+                _syncError.value = null
+                _currentUser.value = null
+            }
+            Result.success(Unit)
+        } catch (e: TimeoutCancellationException) {
+            if (db != null && firebaseAuth?.currentUser?.uid == uid) startRealtimeSyncListeners(uid, db)
+            Result.failure(IllegalStateException("Výmaz sa nestihol dokončiť. Skontrolujte pripojenie a skúste ho znova; časť cloudových dokladov už mohla byť odstránená.", e))
+        } catch (e: CancellationException) {
+            if (db != null && firebaseAuth?.currentUser?.uid == uid) startRealtimeSyncListeners(uid, db)
+            throw e
+        } catch (e: Exception) {
+            if (db != null && firebaseAuth?.currentUser?.uid == uid) startRealtimeSyncListeners(uid, db)
+            val message = if (e is FirebaseAuthRecentLoginRequiredException) {
+                "Pred výmazom je potrebné znova overiť účet Google. Zopakujte výmaz a vyberte ten istý účet."
+            } else {
+                "Výmaz sa nedokončil. Skontrolujte pripojenie a skúste to znova. Už odstránené cloudové doklady sa neobnovia."
+            }
+            Log.e(TAG, "Account deletion failed: ${e.javaClass.simpleName}")
+            Result.failure(IllegalStateException(message, e))
+        }
     }
 
     private suspend fun recalculateStats(userId: String, updateFirestore: Boolean) {

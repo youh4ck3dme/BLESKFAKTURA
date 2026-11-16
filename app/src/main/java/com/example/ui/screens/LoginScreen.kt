@@ -5,6 +5,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -93,7 +95,8 @@ fun LoginScreen(
                 .background(backgroundBrush)
                 .padding(innerPadding)
                 .safeDrawingPadding()
-                .padding(24.dp),
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center
         ) {
             // Background ambient glow using primary brand color (lavender-purple)
@@ -156,7 +159,7 @@ fun LoginScreen(
 
                 // Slovak subtext
                 Text(
-                    text = "Rýchla AI evidencia a automatické skenovanie účtovných dokladov pre slovenských živnostníkov.",
+                    text = if (viewModel.isInternalTesting) "Evidencia dokladov s lokálnym OCR. Údaje pred uložením skontrolujte a doplňte." else "Evidencia účtovných dokladov s návrhom údajov z AI pre slovenských živnostníkov.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                     textAlign = TextAlign.Center,
@@ -334,8 +337,8 @@ fun LoginScreen(
                             }
                         }
 
-                        if (BuildConfig.DEBUG) {
-                            // Local / Demo Mode Entry (Debug builds only)
+                        if (BuildConfig.DEBUG || viewModel.isInternalTesting) {
+                            // This is a local profile; it does not authenticate with Firebase.
                             OutlinedButton(
                                 onClick = {
                                     viewModel.signInDemoUser()
@@ -361,7 +364,7 @@ fun LoginScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Vstúpiť ako hosť (Debug Demo)",
+                                        text = if (viewModel.isInternalTesting) "Pokračovať lokálne bez účtu" else "Vstúpiť ako hosť (Debug Demo)",
                                         style = MaterialTheme.typography.labelLarge.copy(
                                             fontWeight = FontWeight.Bold,
                                             letterSpacing = 0.2.sp
@@ -396,14 +399,16 @@ fun LoginScreen(
                         )
                         Column {
                             Text(
-                                text = if (viewModel.isFirebaseMode) "Režim: Bezpečný Cloud" else "Chýba cloudová konfigurácia",
+                                text = if (viewModel.isInternalTesting) "Interná verzia s lokálnym OCR" else if (viewModel.isFirebaseMode) "Cloudová synchronizácia" else "Chýba cloudová konfigurácia",
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = if (viewModel.isFirebaseMode) {
-                                    "Aplikácia je pripojená k bezpečnému cloudu Firebase. Vaše doklady sú chránené a viazané na váš Google účet."
+                                text = if (viewModel.isInternalTesting) {
+                                    "Čítanie snímok prebieha priamo v zariadení. Lokálny režim funguje bez Google účtu; prihlásenie cez Google pridá cloudovú synchronizáciu údajov dokladov."
+                                } else if (viewModel.isFirebaseMode) {
+                                    "Google prihlásenie slúži na synchronizáciu údajov dokladov cez Firebase."
                                 } else {
                                     "Prihlásenie cez cloud nie je v tejto zostave nakonfigurované. Skontrolujte prosím konfiguráciu služby Firebase."
                                 },
