@@ -13,9 +13,22 @@ import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
+import com.example.BuildConfig
+import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import java.util.Collections
 
 enum class BillingProduct(
     val productId: String,
@@ -49,16 +62,137 @@ enum class BillingProduct(
     )
 }
 
+data class BillingVerificationResponse(
+    val status: String,
+    val idempotent: Boolean,
+    val productId: String,
+    val creditsGranted: Int,
+    val isSubscribed: Boolean
+)
+
+fun interface BillingPurchaseVerifier {
+    suspend fun verifyPurchase(
+        packageName: String,
+        productId: String,
+        purchaseToken: String
+    ): Result<BillingVerificationResponse>
+}
+
+class FirebaseBillingPurchaseVerifier(
+    private val context: Context,
+    private val region: String = FUNCTIONS_REGION
+) : BillingPurchaseVerifier {
+
+    override suspend fun verifyPurchase(
+        packageName: String,
+        productId: String,
+        purchaseToken: String
+    ): Result<BillingVerificationResponse> {
+        return try {
+            if (FirebaseApp.getApps(context).isEmpty()) {
+                FirebaseApp.initializeApp(context)
+            }
+            val currentUser = FirebaseAuth.getInstance().currentUser
+                ?: return Result.failure(
+                    IllegalStateException("Pred overením nákupu sa najprv prihláste svojím účtom Google.")
+                )
+            if (currentUser.uid.isBlank()) {
+                return Result.failure(IllegalStateException("Neplatná relácia používateľa."))
+            }
+
+            val payload = hashMapOf(
+                "packageName" to packageName,
+                "productId" to productId,
+                "purchaseToken" to purchaseToken
+            )
+            val callableResult = FirebaseFunctions.getInstance(region)
+                .getHttpsCallable(CALLABLE_VERIFY_PLAY_PURCHASE)
+                .call(payload)
+                .await()
+
+            val data = callableResult.getData() as? Map<*, *>
+                ?: return Result.failure(IllegalStateException("Server vrátil neplatnú odpoveď."))
+
+            val status = (data["status"] as? String).orEmpty()
+            val responseProductId = (data["productId"] as? String).orEmpty().ifBlank { productId }
+            val idempotent = data["idempotent"] as? Boolean ?: false
+            val creditsGranted = (data["creditsGranted"] as? Number)?.toInt() ?: 0
+            val isSubscribed = data["isSubscribed"] as? Boolean ?: false
+
+            if (status.isBlank()) {
+                return Result.failure(IllegalStateException("V odpovedi servera chýba stav overenia."))
+            }
+
+            Result.success(
+                BillingVerificationResponse(
+                    status = status,
+                    idempotent = idempotent,
+                    productId = responseProductId,
+                    creditsGranted = creditsGranted,
+                    isSubscribed = isSubscribed
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: FirebaseFunctionsException) {
+            val friendlyMessage = when (e.code) {
+                FirebaseFunctionsException.Code.UNAUTHENTICATED ->
+                    "Overenie nákupu vyžaduje platné prihlásenie Google."
+                FirebaseFunctionsException.Code.PERMISSION_DENIED ->
+                    "Nákup je už priradený inému účtu alebo zlyhalo overenie integrity aplikácie (App Check)."
+                FirebaseFunctionsException.Code.FAILED_PRECONDITION ->
+                    "Nákup v Google Play ešte nie je dokončený alebo bol zrušený."
+                FirebaseFunctionsException.Code.INVALID_ARGUMENT ->
+                    "Neplatné parametre produktu alebo identifikátor aplikácie."
+                FirebaseFunctionsException.Code.NOT_FOUND,
+                FirebaseFunctionsException.Code.UNAVAILABLE ->
+                    "Overovacia služba je dočasne nedostupná. Skúste prosím znova o chvíľu."
+                else ->
+                    "Serverové overenie nákupu zlyhalo (${e.code}). Skúste prosím obnoviť nákup."
+            }
+            Log.e(TAG, "verifyPlayPurchase failed with code=${e.code}", e)
+            Result.failure(IllegalStateException(friendlyMessage, e))
+        } catch (e: Exception) {
+            Log.e(TAG, "verifyPlayPurchase unexpected failure", e)
+            Result.failure(
+                IllegalStateException(
+                    "Nepodarilo sa overiť nákup na serveri. Skontrolujte pripojenie a skúste obnoviť nákup.",
+                    e
+                )
+            )
+        }
+    }
+
+    private companion object {
+        const val TAG = "FirebaseBillingVerifier"
+        const val FUNCTIONS_REGION = "europe-west1"
+        const val CALLABLE_VERIFY_PLAY_PURCHASE = "verifyPlayPurchase"
+    }
+}
+
 sealed interface PlayBillingUiState {
     data object Idle : PlayBillingUiState
     data object Connecting : PlayBillingUiState
     data object LaunchingFlow : PlayBillingUiState
     data class PendingVerification(val productId: String, val message: String) : PlayBillingUiState
+    data class Verified(
+        val productId: String,
+        val creditsGranted: Int,
+        val isSubscribed: Boolean,
+        val idempotent: Boolean,
+        val message: String
+    ) : PlayBillingUiState
     data class Info(val message: String) : PlayBillingUiState
     data class Error(val message: String) : PlayBillingUiState
 }
 
-class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
+class PlayBillingManager(
+    context: Context,
+    private val verifier: BillingPurchaseVerifier = FirebaseBillingPurchaseVerifier(context.applicationContext),
+    private val billingScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val packageNameProvider: () -> String = { BuildConfig.APPLICATION_ID },
+    enableBillingClient: Boolean = true
+) : PurchasesUpdatedListener {
     private val appContext = context.applicationContext
 
     private val _billingState = MutableStateFlow<PlayBillingUiState>(PlayBillingUiState.Idle)
@@ -68,32 +202,40 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
     val catalogPrices: StateFlow<Map<String, String>> = _catalogPrices.asStateFlow()
 
     private val _productDetails = mutableMapOf<String, ProductDetails>()
+    private val inFlightTokens: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
     private var isConnected = false
 
-    private val billingClient: BillingClient = BillingClient.newBuilder(appContext)
-        .setListener(this)
-        .enablePendingPurchases(
-            PendingPurchasesParams.newBuilder()
-                .enableOneTimeProducts()
-                .enablePrepaidPlans()
-                .build()
-        )
-        .enableAutoServiceReconnection()
-        .build()
+    private val billingClient: BillingClient? = if (enableBillingClient) {
+        BillingClient.newBuilder(appContext)
+            .setListener(this)
+            .enablePendingPurchases(
+                PendingPurchasesParams.newBuilder()
+                    .enableOneTimeProducts()
+                    .enablePrepaidPlans()
+                    .build()
+            )
+            .enableAutoServiceReconnection()
+            .build()
+    } else {
+        null
+    }
 
     fun startConnection() {
-        if (billingClient.isReady) {
+        val client = billingClient ?: return
+        if (client.isReady) {
             isConnected = true
             queryCatalogProducts()
             queryExistingPurchases()
             return
         }
         _billingState.value = PlayBillingUiState.Connecting
-        billingClient.startConnection(object : BillingClientStateListener {
+        client.startConnection(object : BillingClientStateListener {
             override fun onBillingSetupFinished(billingResult: BillingResult) {
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                     isConnected = true
-                    _billingState.value = PlayBillingUiState.Idle
+                    if (_billingState.value is PlayBillingUiState.Connecting) {
+                        _billingState.value = PlayBillingUiState.Idle
+                    }
                     queryCatalogProducts()
                     queryExistingPurchases()
                 } else {
@@ -116,7 +258,8 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
             _billingState.value = PlayBillingUiState.Error("Nákup vyžaduje aktívne okno aplikácie.")
             return
         }
-        if (!billingClient.isReady) {
+        val client = billingClient
+        if (client == null || !client.isReady) {
             startConnection()
             _billingState.value = PlayBillingUiState.Error(
                 "Spojenie s Google Play sa práve inicializuje. Skúste prosím o chvíľu."
@@ -152,7 +295,7 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
             .build()
 
         _billingState.value = PlayBillingUiState.LaunchingFlow
-        val launchResult = billingClient.launchBillingFlow(activity, flowParams)
+        val launchResult = client.launchBillingFlow(activity, flowParams)
         if (launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
             _billingState.value = PlayBillingUiState.Error(
                 "Nepodarilo sa otvoriť Google Play pokladňu: ${launchResult.debugMessage}"
@@ -160,35 +303,44 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
         }
     }
 
+    fun retryPendingVerifications() {
+        val client = billingClient ?: return
+        if (!client.isReady) {
+            startConnection()
+            return
+        }
+        queryExistingPurchases()
+    }
+
     override fun onPurchasesUpdated(billingResult: BillingResult, purchases: MutableList<Purchase>?) {
-        when (billingResult.responseCode) {
+        billingScope.launch {
+            processUpdatedPurchases(
+                responseCode = billingResult.responseCode,
+                debugMessage = billingResult.debugMessage,
+                purchases = purchases
+            )
+        }
+    }
+
+    internal suspend fun processUpdatedPurchases(
+        responseCode: Int,
+        debugMessage: String,
+        purchases: List<Purchase>?
+    ) {
+        when (responseCode) {
             BillingClient.BillingResponseCode.OK -> {
                 val purchasedList = purchases.orEmpty()
                 if (purchasedList.isEmpty()) {
                     _billingState.value = PlayBillingUiState.Idle
                     return
                 }
-                purchasedList.forEach { purchase ->
-                    when (purchase.purchaseState) {
-                        Purchase.PurchaseState.PURCHASED -> {
-                            // Zero-trust rule: never grant credits or isSubscribed locally without backend
-                            // Play Developer API signature + token verification.
-                            val productId = purchase.products.firstOrNull().orEmpty()
-                            Log.i(TAG, "Play purchase received for $productId; awaiting server verification.")
-                            _billingState.value = PlayBillingUiState.PendingVerification(
-                                productId = productId,
-                                message = "Nákup ($productId) bol zaznamenaný v Google Play. Kredity/Premium sa aktivujú automaticky po overení účtenky na backend serveri (Cloud Functions / Play Developer API)."
-                            )
-                        }
-                        Purchase.PurchaseState.PENDING -> {
-                            _billingState.value = PlayBillingUiState.Info(
-                                "Platba v Google Play čaká na dokončenie. Nárok sa pripíše po potvrdení platby."
-                            )
-                        }
-                        else -> {
-                            _billingState.value = PlayBillingUiState.Idle
-                        }
-                    }
+                for (purchase in purchasedList) {
+                    val productId = purchase.products.firstOrNull().orEmpty()
+                    handleSinglePurchase(
+                        productId = productId,
+                        purchaseToken = purchase.purchaseToken,
+                        purchaseState = purchase.purchaseState
+                    )
                 }
             }
             BillingClient.BillingResponseCode.USER_CANCELED -> {
@@ -196,8 +348,85 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
             }
             else -> {
                 _billingState.value = PlayBillingUiState.Error(
-                    "Google Play nákup nebol dokončený (${billingResult.responseCode}): ${billingResult.debugMessage}"
+                    "Google Play nákup nebol dokončený ($responseCode): $debugMessage"
                 )
+            }
+        }
+    }
+
+    internal suspend fun handleSinglePurchase(
+        productId: String,
+        purchaseToken: String,
+        purchaseState: Int
+    ) {
+        when (purchaseState) {
+            Purchase.PurchaseState.PURCHASED -> {
+                if (productId.isBlank() || purchaseToken.isBlank()) {
+                    _billingState.value = PlayBillingUiState.Error("Nákup neobsahuje platný identifikátor produktu alebo token.")
+                    return
+                }
+                if (!inFlightTokens.add(purchaseToken)) {
+                    return
+                }
+                try {
+                    _billingState.value = PlayBillingUiState.PendingVerification(
+                        productId = productId,
+                        message = "Overujeme účtenku Google Play ($productId) na zabezpečenom serveri..."
+                    )
+                    val verifyResult = verifier.verifyPurchase(
+                        packageName = packageNameProvider(),
+                        productId = productId,
+                        purchaseToken = purchaseToken
+                    )
+                    verifyResult.fold(
+                        onSuccess = { response ->
+                            _billingState.value = when (response.status) {
+                                "GRANTED" -> PlayBillingUiState.Verified(
+                                    productId = response.productId,
+                                    creditsGranted = response.creditsGranted,
+                                    isSubscribed = false,
+                                    idempotent = false,
+                                    message = "Nákup overený. Na účet bolo pripísaných +${response.creditsGranted} kreditov."
+                                )
+                                "ALREADY_PROCESSED" -> PlayBillingUiState.Verified(
+                                    productId = response.productId,
+                                    creditsGranted = 0,
+                                    isSubscribed = response.isSubscribed,
+                                    idempotent = true,
+                                    message = "Nákup ($productId) už bol skôr bezpečne overený a spracovaný."
+                                )
+                                "SUBSCRIPTION_ACTIVE" -> PlayBillingUiState.Verified(
+                                    productId = response.productId,
+                                    creditsGranted = 0,
+                                    isSubscribed = true,
+                                    idempotent = response.idempotent,
+                                    message = "Predplatné Blesk Premium bolo overené na serveri a je aktívne."
+                                )
+                                "SUBSCRIPTION_INACTIVE" -> PlayBillingUiState.Info(
+                                    "Predplatné v Google Play momentálne nie je aktívne alebo čaká na úhradu."
+                                )
+                                else -> PlayBillingUiState.Error(
+                                    "Neznámy výsledok serverového overenia: ${response.status}"
+                                )
+                            }
+                        },
+                        onFailure = { error ->
+                            _billingState.value = PlayBillingUiState.Error(
+                                error.message ?: "Serverové overenie nákupu zlyhalo."
+                            )
+                        }
+                    )
+                } finally {
+                    inFlightTokens.remove(purchaseToken)
+                }
+            }
+            Purchase.PurchaseState.PENDING -> {
+                _billingState.value = PlayBillingUiState.Info(
+                    "Platba v Google Play čaká na dokončenie. Nárok sa pripíše až po potvrdení platby a overení serverom."
+                )
+            }
+            else -> {
+                _billingState.value = PlayBillingUiState.Idle
             }
         }
     }
@@ -207,10 +436,11 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
     }
 
     fun endConnection() {
-        if (billingClient.isReady) {
+        if (billingClient?.isReady == true) {
             billingClient.endConnection()
         }
         isConnected = false
+        billingScope.cancel()
     }
 
     private fun queryCatalogProducts() {
@@ -225,7 +455,8 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
     }
 
     private fun queryByType(type: String, items: List<BillingProduct>) {
-        if (items.isEmpty() || !billingClient.isReady) return
+        val client = billingClient ?: return
+        if (items.isEmpty() || !client.isReady) return
         val productList = items.map { product ->
             QueryProductDetailsParams.Product.newBuilder()
                 .setProductId(product.productId)
@@ -236,7 +467,7 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
             .setProductList(productList)
             .build()
 
-        billingClient.queryProductDetailsAsync(params) { result, queryResult ->
+        client.queryProductDetailsAsync(params) { result, queryResult ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
                 val updatedMap = _catalogPrices.value.toMutableMap()
                 queryResult.productDetailsList.forEach { details ->
@@ -259,12 +490,29 @@ class PlayBillingManager(context: Context) : PurchasesUpdatedListener {
     }
 
     private fun queryExistingPurchases() {
-        if (!billingClient.isReady) return
+        val client = billingClient ?: return
+        if (!client.isReady) return
         listOf(BillingClient.ProductType.INAPP, BillingClient.ProductType.SUBS).forEach { type ->
             val params = QueryPurchasesParams.newBuilder().setProductType(type).build()
-            billingClient.queryPurchasesAsync(params) { result, purchases ->
+            client.queryPurchasesAsync(params) { result, purchases ->
                 if (result.responseCode == BillingClient.BillingResponseCode.OK && purchases.isNotEmpty()) {
-                    Log.i(TAG, "Found ${purchases.size} existing $type purchases in Google Play cache.")
+                    val pendingToVerify = purchases.filter { purchase ->
+                        purchase.purchaseState == Purchase.PurchaseState.PURCHASED &&
+                            (type == BillingClient.ProductType.INAPP || !purchase.isAcknowledged)
+                    }
+                    if (pendingToVerify.isNotEmpty()) {
+                        Log.i(TAG, "Recovering ${pendingToVerify.size} $type purchases via backend verifier.")
+                        billingScope.launch {
+                            pendingToVerify.forEach { purchase ->
+                                val sku = purchase.products.firstOrNull().orEmpty()
+                                handleSinglePurchase(
+                                    productId = sku,
+                                    purchaseToken = purchase.purchaseToken,
+                                    purchaseState = purchase.purchaseState
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

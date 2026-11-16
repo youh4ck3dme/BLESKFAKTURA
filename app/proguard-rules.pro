@@ -12,6 +12,9 @@
 -keep class androidx.credentials.** { *; }
 -keep class com.google.android.libraries.identity.googleid.** { *; }
 
+# Firebase Functions Callables
+-keep class com.google.firebase.functions.** { *; }
+
 # Strip verbose debug logging in release builds
 -assumenosideeffects class android.util.Log {
     public static int d(...);

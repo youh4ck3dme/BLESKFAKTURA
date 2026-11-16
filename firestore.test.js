@@ -164,6 +164,50 @@ test("User credit transitions: reserve (-1), commit, rollback (+1) succeed; arbi
       updatedAt: new Date(Date.now() - 100),
     })
   );
+
+  // Forged rollback adding +5 credits even while a valid reservation is active must fail
+  await assertSucceeds(
+    userRef.update({
+      credits: 9,
+      activeReservationId: "res-forged-check",
+      updatedAt: new Date(Date.now() - 50),
+    })
+  );
+  await assertFails(
+    userRef.update({
+      credits: 14,
+      activeReservationId: null,
+      updatedAt: new Date(Date.now() - 10),
+    })
+  );
+  await assertFails(
+    userRef.update({
+      credits: 10,
+      activeReservationId: null,
+      isSubscribed: true,
+      updatedAt: new Date(Date.now() - 10),
+    })
+  );
+});
+
+test("Server-only billingTokens collection: clients cannot read, forge, or replay token records", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const tokenDocId = "a".repeat(64);
+  const forgedRecord = {
+    tokenHash: tokenDocId,
+    ownerUid: ALICE_UID,
+    productId: "blesk_credits_100",
+    productType: "INAPP",
+    packageName: "sk.bizagent.bleskovafaktura",
+    status: "CREDITED",
+    creditsGranted: 100,
+  };
+
+  await assertFails(unauthDb.collection("billingTokens").doc(tokenDocId).get());
+  await assertFails(aliceDb.collection("billingTokens").doc(tokenDocId).get());
+  await assertFails(aliceDb.collection("billingTokens").doc(tokenDocId).set(forgedRecord));
+  await assertFails(aliceDb.collection("billingTokens").doc(tokenDocId).delete());
 });
 
 test("Cross-user isolation: Bob cannot read, list, update, or delete Alice invoices", async () => {

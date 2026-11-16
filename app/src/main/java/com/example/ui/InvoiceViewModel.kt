@@ -331,6 +331,10 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
         playBillingManager.launchPurchase(activity, product)
     }
 
+    fun retryPendingBillingVerifications() {
+        playBillingManager.retryPendingVerifications()
+    }
+
     fun clearBillingMessage() {
         playBillingManager.clearMessage()
     }

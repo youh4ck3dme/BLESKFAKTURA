@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -14,12 +17,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material3.AlertDialog
@@ -47,9 +54,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.ui.InvoiceViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,6 +71,11 @@ fun SettingsScreen(
 ) {
     BackHandler { onNavigateBack() }
 
+    val context = LocalContext.current
+    val supportEmail = stringResource(R.string.support_email)
+    val privacyPolicyUrl = stringResource(R.string.privacy_policy_url).trim()
+    val hasLivePrivacyUrl = privacyPolicyUrl.startsWith("https://")
+
     val currentUser by viewModel.currentUser.collectAsState()
     val userStats by viewModel.userStats.collectAsState()
 
@@ -68,6 +83,22 @@ fun SettingsScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var isDeleting by remember { mutableStateOf(false) }
     var deleteErrorMessage by remember { mutableStateOf<String?>(null) }
+
+    val openSupportEmail = {
+        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+            data = Uri.parse("mailto:$supportEmail")
+            putExtra(Intent.EXTRA_SUBJECT, "Blesková Faktúra — GDPR / Podpora")
+        }
+        runCatching {
+            context.startActivity(emailIntent)
+        }.onFailure {
+            Toast.makeText(
+                context,
+                "Kontaktujte podporu na adrese $supportEmail",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     Scaffold(
         modifier = Modifier
@@ -174,7 +205,7 @@ fun SettingsScreen(
                 ) {
                     Column(
                         modifier = Modifier.padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
@@ -190,17 +221,47 @@ fun SettingsScreen(
                             )
                         }
                         Text(
-                            text = "Vaše doklady sú uložené pod vaším Google účtom v izolovanom Firestore priestore a v šifrovanom súkromnom úložisku zariadenia. Snímky odoslané na AI vyťaženie sa nepoužívajú na reklamu.",
+                            text = "Vaše doklady sú uložené pod vaším Google účtom v izolovanom Firestore priestore a v súkromnom úložisku zariadenia (bez Android záloh). Snímky odoslané na AI vyťaženie sa nepoužívajú na reklamu.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         TextButton(
                             onClick = { showPrivacyDialog = true },
-                            modifier = Modifier.testTag("privacy_policy_button")
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("privacy_policy_button")
                         ) {
                             Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Zobraziť Zásady ochrany osobných údajov", fontWeight = FontWeight.Bold)
+                        }
+                        if (hasLivePrivacyUrl) {
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(privacyPolicyUrl))
+                                        )
+                                    }
+                                },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("privacy_policy_web_button")
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Otvoriť online verziu (HTTPS)", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        TextButton(
+                            onClick = { openSupportEmail() },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("support_email_button")
+                        ) {
+                            Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Kontaktovať podporu / GDPR ($supportEmail)", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -282,13 +343,19 @@ fun SettingsScreen(
             onDismissRequest = { showPrivacyDialog = false },
             title = { Text("Zásady ochrany osobných údajov", fontWeight = FontWeight.Bold) },
             text = {
-                Text(
-                    "Blesková Faktúra (sk.bizagent.bleskovafaktura)\n\n" +
-                        "1. Spracúvané údaje: Google identifikátor účtu (UID, e-mail, meno), účtovné doklady (dodávateľ, IČO/DIČ, dátumy, sumy, DPH) a snímky dokladov.\n\n" +
-                        "2. Účel a príjemcovia: Autentifikácia cez Google/Firebase Auth, cloudové zálohovanie vo Firestore (vlastníctvo prísne izolované na váš UID) a jednorazová AI extrakcia cez Firebase AI Logic (chránené cez App Check).\n\n" +
-                        "3. Zmazanie údajov: Účet a všetky dáta môžete kedykoľvek trvalo vymazať priamo tu v Nastaveniach alebo prostredníctvom webovej žiadosti o výmaz priradenej v Play Console Data Safety.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Blesková Faktúra (sk.bizagent.bleskovafaktura)\nKontakt: $supportEmail\n\n" +
+                            "1. Spracúvané údaje: Google identifikátor účtu (UID, e-mail, meno), účtovné doklady (dodávateľ, IČO/DIČ, dátumy, sumy, DPH) a snímky dokladov.\n\n" +
+                            "2. Účel a bezpečnosť: Autentifikácia cez Google/Firebase Auth, cloudová synchronizácia vo Firestore (prístup prísne izolovaný na váš UID), jednorazová AI extrakcia cez Firebase AI Logic (chránené cez App Check / Play Integrity) a overenie nákupov Google Play Billing.\n\n" +
+                            "3. Uchovávanie (retencia): Účet a doklady uchovávame počas aktívneho používania; v aplikácii ich vymažete okamžite (do 14 dní pri e-mailovej žiadosti). Dočasné PDF exporty v cache sa čistia po 24 hodinách a pri odhlásení. Technický hash tokenu nákupu (billingTokens bez čísel kariet) sa môže uchovávať v zákonnej daňovej a proti-podvodnej lehote.\n\n" +
+                            "4. Výmaz údajov: Účet a dáta vymažete priamo tu v Nastaveniach alebo e-mailom na $supportEmail.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = { showPrivacyDialog = false }) {

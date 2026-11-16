@@ -373,6 +373,20 @@ fun PricingScreen(
                         )
                     }
                 }
+
+                item {
+                    OutlinedButton(
+                        onClick = { viewModel.retryPendingBillingVerifications() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("restore_purchases_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    ) {
+                        Text("Obnoviť a overiť nákupy", fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
 
             if (billingState is PlayBillingUiState.LaunchingFlow) {
@@ -402,7 +416,7 @@ fun PricingScreen(
 
             if (billingState is PlayBillingUiState.PendingVerification) {
                 val pending = billingState as PlayBillingUiState.PendingVerification
-                Dialog(onDismissRequest = { viewModel.clearBillingMessage() }) {
+                Dialog(onDismissRequest = {}) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         shape = RoundedCornerShape(24.dp),
@@ -410,6 +424,43 @@ fun PricingScreen(
                             .fillMaxWidth()
                             .padding(16.dp)
                             .testTag("purchase_verification_dialog"),
+                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+
+                            Text(
+                                text = "Overujem nákup na serveri",
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Text(
+                                text = pending.message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (billingState is PlayBillingUiState.Verified) {
+                val verified = billingState as PlayBillingUiState.Verified
+                Dialog(onDismissRequest = { viewModel.clearBillingMessage() }) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .testTag("purchase_verified_dialog"),
                         border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
                     ) {
                         Column(
@@ -426,21 +477,21 @@ fun PricingScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Overenie",
+                                    contentDescription = "Overené",
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                     modifier = Modifier.size(32.dp)
                                 )
                             }
 
                             Text(
-                                text = "Čaká na serverové overenie",
+                                text = "Nákup overený",
                                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface,
                                 textAlign = TextAlign.Center
                             )
 
                             Text(
-                                text = pending.message,
+                                text = verified.message,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center

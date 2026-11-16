@@ -184,6 +184,65 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
                 val fsEx = e.unwrapFirestoreException()
                 assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, fsEx?.code)
             }
+
+            // Negative 2: Client cannot mint arbitrary credits
+            try {
+                withTimeout(DEFAULT_TIMEOUT_MS) {
+                    firestore.collection("users").document(uid)
+                        .update(
+                            mapOf(
+                                "credits" to 500,
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        ).await()
+                }
+                fail("Expected PERMISSION_DENIED when client sets credits=500")
+            } catch (e: Exception) {
+                assertEquals(
+                    FirebaseFirestoreException.Code.PERMISSION_DENIED,
+                    e.unwrapFirestoreException()?.code
+                )
+            }
+
+            // Negative 3: Forged rollback without active reservation fails with PERMISSION_DENIED
+            try {
+                withTimeout(DEFAULT_TIMEOUT_MS) {
+                    firestore.collection("users").document(uid)
+                        .update(
+                            mapOf(
+                                "credits" to 11,
+                                "activeReservationId" to null,
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        ).await()
+                }
+                fail("Expected PERMISSION_DENIED on forged rollback without activeReservationId")
+            } catch (e: Exception) {
+                assertEquals(
+                    FirebaseFirestoreException.Code.PERMISSION_DENIED,
+                    e.unwrapFirestoreException()?.code
+                )
+            }
+
+            // Negative 4: Client cannot write or read billingTokens collection
+            try {
+                withTimeout(DEFAULT_TIMEOUT_MS) {
+                    firestore.collection("billingTokens").document("deadbeef".repeat(8))
+                        .set(
+                            mapOf(
+                                "ownerUid" to uid,
+                                "productId" to "blesk_credits_100",
+                                "creditsGranted" to 100
+                            )
+                        ).await()
+                }
+                fail("Expected PERMISSION_DENIED when client writes billingTokens")
+            } catch (e: Exception) {
+                assertEquals(
+                    FirebaseFirestoreException.Code.PERMISSION_DENIED,
+                    e.unwrapFirestoreException()?.code
+                )
+            }
         } finally {
             repo.stopCloudSync()
         }

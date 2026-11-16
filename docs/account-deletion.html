@@ -44,7 +44,7 @@
 </head>
 <body>
   <h1>Vymazanie účtu a údajov</h1>
-  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>)</p>
+  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>) • <a href="./privacy-policy.html">Zásady ochrany osobných údajov</a></p>
 
   <section>
     <h2>1. Okamžité vymazanie priamo v aplikácii (odporúčané)</h2>
@@ -70,8 +70,8 @@
   <section>
     <h2>3. Rozsah mazaných a uchovávaných údajov</h2>
     <ul>
-      <li><strong>Okamžite a trvalo zmazané dáta:</strong> účet Firebase Authentication, používateľský profil <code>users/{uid}</code> (kredity, súčty, stav), celá podkolekcia dokladov <code>users/{uid}/invoices/*</code>, lokálna Room databáza, archivované fotografie dokladov v zariadení a dočasné PDF súbory.</li>
-      <li><strong>Možné obmedzené uchovanie:</strong> ak používateľ realizoval platené nákupy cez Google Play, technický hash overeného nákupného tokenu (<code>billingTokens</code> bez účtovných dokladov) a účtovný doklad poskytovateľa platby môžu byť uchované po zákonom stanovenú alebo bezpečnostnú dobu na prevenciu zneužitia platieb a splnenie daňových povinností.</li>
+      <li><strong>Okamžite a trvalo zmazané dáta:</strong> účet Firebase Authentication, používateľský profil <code>users/{uid}</code> (kredity, súčty, stav), celá podkolekcia dokladov <code>users/{uid}/invoices/*</code>, lokálna Room databáza, archivované fotografie dokladov v zariadení (<code>filesDir/receipts/</code>), dočasné snímky kamery a PDF cache.</li>
+      <li><strong>Možné obmedzené uchovanie:</strong> ak používateľ realizoval platené nákupy cez Google Play, technický SHA-256 hash overeného nákupného tokenu (<code>billingTokens</code> bez obsahu účtovných dokladov a bez čísel kariet) a účtovný doklad poskytovateľa platby môžu byť uchované po zákonom stanovenú účtovnú a proti-podvodnú lehotu (až 10 rokov) na prevenciu zneužitia platieb a splnenie daňových povinností.</li>
     </ul>
   </section>
 </body>

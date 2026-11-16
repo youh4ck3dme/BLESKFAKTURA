@@ -144,9 +144,9 @@ object ReceiptImageProcessor {
         return name to sizeStr
     }
 
-    private fun calculateInSampleSize(width: Int, height: Int, maxDim: Int): Int {
+    internal fun calculateInSampleSize(width: Int, height: Int, maxDimension: Int): Int {
         var inSampleSize = 1
-        while ((width / inSampleSize) > maxDim * 2 || (height / inSampleSize) > maxDim * 2) {
+        while ((width / inSampleSize) > maxDimension * 2 || (height / inSampleSize) > maxDimension * 2) {
             inSampleSize *= 2
         }
         return inSampleSize
@@ -173,10 +173,10 @@ object ReceiptImageProcessor {
         }
     }
 
-    private fun scaleDownIfNeeded(bitmap: Bitmap, maxDim: Int): Bitmap {
+    internal fun scaleDownIfNeeded(bitmap: Bitmap, maxDimension: Int): Bitmap {
         val maxSide = maxOf(bitmap.width, bitmap.height)
-        if (maxSide <= maxDim) return bitmap
-        val ratio = maxDim.toFloat() / maxSide.toFloat()
+        if (maxSide <= maxDimension) return bitmap
+        val ratio = maxDimension.toFloat() / maxSide.toFloat()
         val targetW = (bitmap.width * ratio).toInt().coerceAtLeast(1)
         val targetH = (bitmap.height * ratio).toInt().coerceAtLeast(1)
         val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)

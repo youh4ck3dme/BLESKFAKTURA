@@ -136,10 +136,28 @@ export function validateVerifyInput(input: VerifyPurchaseInput): CatalogProductS
   return spec;
 }
 
-const ACTIVE_SUBSCRIPTION_STATES = new Set([
+const IMMEDIATE_ACTIVE_SUBSCRIPTION_STATES = new Set([
   "SUBSCRIPTION_STATE_ACTIVE",
   "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
 ]);
+
+export function isSubscriptionEntitled(
+  sub: SubscriptionPlayPurchase,
+  nowMs: number = Date.now()
+): boolean {
+  if (IMMEDIATE_ACTIVE_SUBSCRIPTION_STATES.has(sub.subscriptionState)) {
+    return true;
+  }
+  // Canceled auto-renew retains access until expiryTimeMillis if expiry is still in the future.
+  if (
+    sub.subscriptionState === "SUBSCRIPTION_STATE_CANCELED" &&
+    typeof sub.expiryTimeMillis === "number" &&
+    sub.expiryTimeMillis > nowMs
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export async function verifyAndGrantPlayPurchase(
   input: VerifyPurchaseInput,
@@ -152,10 +170,16 @@ export async function verifyAndGrantPlayPurchase(
 
   if (spec.productType === "INAPP") {
     const playPurchase = await playClient.getProductPurchase(input.packageName, spec.productId, token);
+    if (playPurchase.purchaseState === 2) {
+      throw new VerificationError(
+        "failed-precondition",
+        "Purchase is pending payment confirmation in Google Play (purchaseState=2)."
+      );
+    }
     if (playPurchase.purchaseState !== 0) {
       throw new VerificationError(
         "failed-precondition",
-        `Purchase is not completed (purchaseState=${playPurchase.purchaseState}).`
+        `Purchase is canceled or incomplete (purchaseState=${playPurchase.purchaseState}).`
       );
     }
 
@@ -168,6 +192,9 @@ export async function verifyAndGrantPlayPurchase(
             "Purchase token is already bound to another user account."
           );
         }
+        if (existing.status === "REVOKED") {
+          throw new VerificationError("failed-precondition", "Purchase has been refunded or revoked.");
+        }
         if (existing.status === "CREDITED") {
           return {
             status: "ALREADY_PROCESSED",
@@ -177,11 +204,10 @@ export async function verifyAndGrantPlayPurchase(
             isSubscribed: false,
           };
         }
-        if (existing.status === "REVOKED") {
-          throw new VerificationError("failed-precondition", "Purchase has been refunded or revoked.");
-        }
       }
 
+      // Order invariant: commit Firestore entitlement + tokenHash BEFORE Play consume
+      // so credits are never lost if consume fails mid-flight; retries re-consume below.
       await tx.grantInAppCredits(input.uid, spec.creditsDelta);
       tx.setToken(tokenHash, {
         tokenHash,
@@ -204,7 +230,8 @@ export async function verifyAndGrantPlayPurchase(
       };
     });
 
-    if (!txResult.idempotent && playPurchase.consumptionState !== 1) {
+    // Safe recovery: even on an idempotent retry, consume in Google Play if Play still shows unconsumed.
+    if (playPurchase.consumptionState !== 1) {
       await playClient.consumeProductPurchase(input.packageName, spec.productId, token);
     }
     return txResult;
@@ -218,15 +245,20 @@ export async function verifyAndGrantPlayPurchase(
       `Subscription product mismatch (${sub.productIdFromLineItems}).`
     );
   }
-  const isActive = ACTIVE_SUBSCRIPTION_STATES.has(sub.subscriptionState);
+  const isActive = isSubscriptionEntitled(sub);
 
   const subResult = await store.runInTransaction<VerifyPurchaseResult>(async (tx) => {
     const existing = await tx.getToken(tokenHash);
-    if (existing && existing.ownerUid !== input.uid) {
-      throw new VerificationError(
-        "permission-denied",
-        "Subscription token is already bound to another user account."
-      );
+    if (existing) {
+      if (existing.ownerUid !== input.uid) {
+        throw new VerificationError(
+          "permission-denied",
+          "Subscription token is already bound to another user account."
+        );
+      }
+      if (existing.status === "REVOKED" && !isActive) {
+        throw new VerificationError("failed-precondition", "Subscription purchase was revoked.");
+      }
     }
 
     await tx.setUserSubscription(input.uid, isActive, sub.expiryTimeMillis ?? null);
@@ -269,6 +301,12 @@ export interface PlayRtdnNotification {
     purchaseToken?: string;
     sku?: string;
   };
+  voidedPurchaseNotification?: {
+    purchaseToken?: string;
+    orderId?: string;
+    productType?: number; // 1 = SUBS, 2 = INAPP
+    refundType?: number;
+  };
 }
 
 export async function processPlayRtdnNotification(
@@ -280,46 +318,92 @@ export async function processPlayRtdnNotification(
     return { handled: false, action: "IGNORED_PACKAGE" };
   }
 
+  // RTDN is treated strictly as a wake-up signal: always re-verify authoritative state via Play Developer API.
   const subNotif = payload.subscriptionNotification;
   if (subNotif?.purchaseToken) {
-    const tokenHash = hashPurchaseToken(subNotif.purchaseToken);
-    const sub = await playClient.getSubscriptionV2(EXPECTED_PACKAGE_NAME, subNotif.purchaseToken);
-    const isActive = ACTIVE_SUBSCRIPTION_STATES.has(sub.subscriptionState);
-
-    return store.runInTransaction(async (tx) => {
-      const existing = await tx.getToken(tokenHash);
-      if (!existing) {
-        return { handled: false, action: "UNKNOWN_TOKEN" };
-      }
-      await tx.setUserSubscription(existing.ownerUid, isActive, sub.expiryTimeMillis ?? null);
-      tx.setToken(tokenHash, {
-        ...existing,
-        status: isActive ? "ACTIVE" : "REVOKED",
-        subscriptionExpiryMillis: sub.expiryTimeMillis ?? null,
-      });
-      return { handled: true, action: isActive ? "SUBSCRIPTION_REFRESHED" : "SUBSCRIPTION_REVOKED" };
-    });
+    return reconcileSubscriptionFromPlay(subNotif.purchaseToken, playClient, store);
   }
 
   const oneTimeNotif = payload.oneTimeProductNotification;
-  // notificationType === 2 -> ONE_TIME_PRODUCT_CANCELED (refund/chargeback)
-  if (oneTimeNotif?.purchaseToken && oneTimeNotif.notificationType === 2) {
-    const tokenHash = hashPurchaseToken(oneTimeNotif.purchaseToken);
-    return store.runInTransaction(async (tx) => {
-      const existing = await tx.getToken(tokenHash);
-      if (!existing || existing.status === "REVOKED") {
-        return { handled: false, action: "NOOP" };
-      }
-      if (existing.creditsGranted > 0) {
-        await tx.grantInAppCredits(existing.ownerUid, -existing.creditsGranted);
-      }
-      tx.setToken(tokenHash, {
-        ...existing,
-        status: "REVOKED",
-      });
-      return { handled: true, action: "INAPP_REVOKED" };
-    });
+  if (oneTimeNotif?.purchaseToken) {
+    return reconcileInAppFromPlay(oneTimeNotif.purchaseToken, oneTimeNotif.sku, playClient, store);
+  }
+
+  const voidedNotif = payload.voidedPurchaseNotification;
+  if (voidedNotif?.purchaseToken) {
+    const tokenHash = hashPurchaseToken(voidedNotif.purchaseToken);
+    const known = await store.runInTransaction(async (tx) => tx.getToken(tokenHash));
+    if (!known) {
+      return { handled: false, action: "UNKNOWN_TOKEN" };
+    }
+    if (known.productType === "SUBS" || voidedNotif.productType === 1) {
+      return reconcileSubscriptionFromPlay(voidedNotif.purchaseToken, playClient, store);
+    }
+    return reconcileInAppFromPlay(voidedNotif.purchaseToken, known.productId, playClient, store);
   }
 
   return { handled: false, action: "UNHANDLED_NOTIFICATION" };
 }
+
+async function reconcileSubscriptionFromPlay(
+  purchaseToken: string,
+  playClient: PlayDeveloperClient,
+  store: BillingStore
+): Promise<{ handled: boolean; action: string }> {
+  const tokenHash = hashPurchaseToken(purchaseToken);
+  const sub = await playClient.getSubscriptionV2(EXPECTED_PACKAGE_NAME, purchaseToken);
+  const isActive = isSubscriptionEntitled(sub);
+
+  return store.runInTransaction(async (tx) => {
+    const existing = await tx.getToken(tokenHash);
+    if (!existing) {
+      return { handled: false, action: "UNKNOWN_TOKEN" };
+    }
+    await tx.setUserSubscription(existing.ownerUid, isActive, sub.expiryTimeMillis ?? null);
+    tx.setToken(tokenHash, {
+      ...existing,
+      status: isActive ? "ACTIVE" : "REVOKED",
+      subscriptionExpiryMillis: sub.expiryTimeMillis ?? null,
+    });
+    return { handled: true, action: isActive ? "SUBSCRIPTION_REFRESHED" : "SUBSCRIPTION_REVOKED" };
+  });
+}
+
+async function reconcileInAppFromPlay(
+  purchaseToken: string,
+  skuHint: string | undefined,
+  playClient: PlayDeveloperClient,
+  store: BillingStore
+): Promise<{ handled: boolean; action: string }> {
+  const tokenHash = hashPurchaseToken(purchaseToken);
+  const existingPrecheck = await store.runInTransaction(async (tx) => tx.getToken(tokenHash));
+  if (!existingPrecheck) {
+    return { handled: false, action: "UNKNOWN_TOKEN" };
+  }
+  const productId = existingPrecheck.productId || skuHint;
+  if (!productId || !PRODUCT_CATALOG[productId]) {
+    return { handled: false, action: "UNKNOWN_SKU" };
+  }
+
+  // Always verify authoritative purchase state via Google Play Developer API
+  const playPurchase = await playClient.getProductPurchase(EXPECTED_PACKAGE_NAME, productId, purchaseToken);
+  if (playPurchase.purchaseState === 0) {
+    return { handled: true, action: "INAPP_STILL_VALID" };
+  }
+
+  return store.runInTransaction(async (tx) => {
+    const existing = await tx.getToken(tokenHash);
+    if (!existing || existing.status === "REVOKED") {
+      return { handled: false, action: "NOOP" };
+    }
+    if (existing.creditsGranted > 0) {
+      await tx.grantInAppCredits(existing.ownerUid, -existing.creditsGranted);
+    }
+    tx.setToken(tokenHash, {
+      ...existing,
+      status: "REVOKED",
+    });
+    return { handled: true, action: "INAPP_REVOKED" };
+  });
+}
+
