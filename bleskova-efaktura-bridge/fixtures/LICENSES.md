@@ -8,4 +8,4 @@ Overené 2026-11-16.
 - UBL 2.1 xsdrt je z https://docs.oasis-open.org/ubl/os-UBL-2.1/xsdrt/ (OASIS, 4. november 2013).
 - SK XLSX `2026.10.29_Peppol_Bis3_v1_13.xlsx` sha256 `002a65e6da9debd9af5131e213d6ad1bbc2adc47641b62a9311924ecc7b4cfc9` je pripnutý referenčný súbor FS SR. Ako Schematron sa nespúšťa.
 - Saxon-HE 12.9 je MPL 2.0, SchXslt 1.10.1 je MIT, xmlresolver 5.3.3 je Apache-2.0.
-- `fixtures/synthetic` a `fixtures/invalid` sú vyrobené pre tento modul. Žiadne reálne účtenky.
+- `fixtures/synthetic/base-example.outbound.json` je kanonický JSON z `inspectUbl` oficiálneho `base-example.xml` v smere OUTBOUND. Nie je to druhý právny doklad.

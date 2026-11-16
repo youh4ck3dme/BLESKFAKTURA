@@ -11,7 +11,6 @@ import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
-import okio.BufferedSink
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -58,7 +57,11 @@ data class DocumentDto(
     val kind: DocumentKind? = null,
     val direction: Direction? = null,
     val sha256: String? = null,
-    val lifecycle: String? = null
+    val lifecycle: String? = null,
+    val version: Int? = null,
+    val delivery: DeliveryDto? = null,
+    val validation: ValidationReportDto? = null,
+    val correlationId: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -92,9 +95,11 @@ interface EfakturaClient {
     suspend fun getDocument(id: String): DocumentDto
     suspend fun downloadOriginal(id: String): ByteArray
     suspend fun createDraft(body: Map<String, Any?>, idempotencyKey: String): DocumentDto
+    suspend fun createDraftJson(json: String, idempotencyKey: String): DocumentDto
     suspend fun validateDraft(id: String, idempotencyKey: String): ValidationReportDto
     suspend fun issueDraft(id: String, idempotencyKey: String, expectedVersion: Int? = null): DocumentDto
-    suspend fun sendDocument(id: String, idempotencyKey: String): DeliveryDto
+    /** POST /send returns the document. Delivery state is nested in [DocumentDto.delivery], not a top-level status. */
+    suspend fun sendDocument(id: String, idempotencyKey: String): DocumentDto
     suspend fun getDeliveryState(id: String): DeliveryDto
 }
 
@@ -112,7 +117,7 @@ class HttpEfakturaClient(
     private val tenantId: String,
     private val authTokens: AuthTokenProvider,
     private val appCheckTokens: AppCheckTokenProvider,
-    http: OkHttpClient = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
+    http: OkHttpClient = OkHttpClient.Builder().callTimeout(60, TimeUnit.SECONDS).build()
 ) : EfakturaClient {
     private val moshi = Moshi.Builder().add(generatedAdapters()).build()
     private val api = Retrofit.Builder()
@@ -140,24 +145,27 @@ class HttpEfakturaClient(
             }
             out.toByteArray()
         }
-        return call(api.importXml(tenantId, direction.name, idempotencyKey, authHeader(), appCheckHeader(), bytes.toRequestBody("application/xml".toMediaType())))
+        return call(api.importXml(tenantId, tenantId, direction.name, idempotencyKey, authHeader(), appCheckHeader(), bytes.toRequestBody("application/xml".toMediaType())))
     }
 
-    override suspend fun listDocuments(cursor: String?) = call(api.list(tenantId, cursor, authHeader(), appCheckHeader()))
-    override suspend fun getDocument(id: String) = call(api.get(tenantId, id, authHeader(), appCheckHeader()))
+    override suspend fun listDocuments(cursor: String?) = call(api.list(tenantId, tenantId, cursor, authHeader(), appCheckHeader()))
+    override suspend fun getDocument(id: String) = call(api.get(tenantId, tenantId, id, authHeader(), appCheckHeader()))
     override suspend fun downloadOriginal(id: String): ByteArray {
-        val response = execute(api.original(tenantId, id, authHeader(), appCheckHeader()))
+        val response = execute(api.original(tenantId, tenantId, id, authHeader(), appCheckHeader()))
         val body = response.body() ?: throw EfakturaException.Transport("Prázdna odpoveď.")
         return body.bytes()
     }
     override suspend fun createDraft(body: Map<String, Any?>, idempotencyKey: String): DocumentDto {
         val json = mapAdapter.toJson(body) ?: "{}"
-        return call(api.draft(tenantId, idempotencyKey, authHeader(), appCheckHeader(), json.toRequestBody("application/json".toMediaType())))
+        return createDraftJson(json, idempotencyKey)
     }
-    override suspend fun validateDraft(id: String, idempotencyKey: String) = call(api.validate(tenantId, id, idempotencyKey, authHeader(), appCheckHeader()))
-    override suspend fun issueDraft(id: String, idempotencyKey: String, expectedVersion: Int?) = call(api.issue(tenantId, id, idempotencyKey, expectedVersion?.toString(), authHeader(), appCheckHeader()))
-    override suspend fun sendDocument(id: String, idempotencyKey: String) = call(api.send(tenantId, id, idempotencyKey, authHeader(), appCheckHeader()))
-    override suspend fun getDeliveryState(id: String) = call(api.delivery(tenantId, id, authHeader(), appCheckHeader()))
+    override suspend fun createDraftJson(json: String, idempotencyKey: String): DocumentDto {
+        return call(api.draft(tenantId, tenantId, idempotencyKey, authHeader(), appCheckHeader(), json.toRequestBody("application/json".toMediaType())))
+    }
+    override suspend fun validateDraft(id: String, idempotencyKey: String) = call(api.validate(tenantId, tenantId, id, idempotencyKey, authHeader(), appCheckHeader()))
+    override suspend fun issueDraft(id: String, idempotencyKey: String, expectedVersion: Int?) = call(api.issue(tenantId, tenantId, id, idempotencyKey, expectedVersion?.toString(), authHeader(), appCheckHeader()))
+    override suspend fun sendDocument(id: String, idempotencyKey: String) = call(api.send(tenantId, tenantId, id, idempotencyKey, authHeader(), appCheckHeader()))
+    override suspend fun getDeliveryState(id: String) = call(api.delivery(tenantId, tenantId, id, authHeader(), appCheckHeader()))
 
     private suspend fun authHeader() = "Bearer ${authTokens.token()}"
     private suspend fun appCheckHeader() = appCheckTokens.token()
@@ -213,6 +221,7 @@ private interface Api {
     @POST("v1/tenants/{tenantId}/documents/import")
     fun importXml(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Query("direction") direction: String,
         @Header("Idempotency-Key") idempotencyKey: String,
         @Header("Authorization") authorization: String,
@@ -223,6 +232,7 @@ private interface Api {
     @GET("v1/tenants/{tenantId}/documents")
     fun list(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Query("cursor") cursor: String?,
         @Header("Authorization") authorization: String,
         @Header("X-Firebase-AppCheck") appCheck: String
@@ -231,6 +241,7 @@ private interface Api {
     @GET("v1/tenants/{tenantId}/documents/{id}")
     fun get(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Path("id") id: String,
         @Header("Authorization") authorization: String,
         @Header("X-Firebase-AppCheck") appCheck: String
@@ -240,6 +251,7 @@ private interface Api {
     @GET("v1/tenants/{tenantId}/documents/{id}/original")
     fun original(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Path("id") id: String,
         @Header("Authorization") authorization: String,
         @Header("X-Firebase-AppCheck") appCheck: String
@@ -248,6 +260,7 @@ private interface Api {
     @POST("v1/tenants/{tenantId}/drafts")
     fun draft(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Header("Idempotency-Key") idempotencyKey: String,
         @Header("Authorization") authorization: String,
         @Header("X-Firebase-AppCheck") appCheck: String,
@@ -257,6 +270,7 @@ private interface Api {
     @POST("v1/tenants/{tenantId}/drafts/{id}/validate")
     fun validate(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Path("id") id: String,
         @Header("Idempotency-Key") idempotencyKey: String,
         @Header("Authorization") authorization: String,
@@ -266,6 +280,7 @@ private interface Api {
     @POST("v1/tenants/{tenantId}/drafts/{id}/issue")
     fun issue(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Path("id") id: String,
         @Header("Idempotency-Key") idempotencyKey: String,
         @Header("X-Expected-Version") expectedVersion: String?,
@@ -276,15 +291,17 @@ private interface Api {
     @POST("v1/tenants/{tenantId}/documents/{id}/send")
     fun send(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Path("id") id: String,
         @Header("Idempotency-Key") idempotencyKey: String,
         @Header("Authorization") authorization: String,
         @Header("X-Firebase-AppCheck") appCheck: String
-    ): Call<DeliveryDto>
+    ): Call<DocumentDto>
 
     @GET("v1/tenants/{tenantId}/documents/{id}/delivery")
     fun delivery(
         @Path("tenantId") tenantId: String,
+        @Header("X-Tenant-Id") tenantHeader: String,
         @Path("id") id: String,
         @Header("Authorization") authorization: String,
         @Header("X-Firebase-AppCheck") appCheck: String

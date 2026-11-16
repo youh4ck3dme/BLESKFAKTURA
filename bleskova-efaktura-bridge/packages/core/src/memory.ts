@@ -32,10 +32,20 @@ export interface NoteRecord {
   createdAt: string;
 }
 
+export type IdempotencyState = "IN_PROGRESS" | "COMPLETED" | "REJECTED" | "RETRYABLE" | "UNCERTAIN";
+
+export interface IdempotencyError {
+  code: string;
+  httpStatus: number;
+  message: string;
+}
+
 export interface IdempotencyRecord {
   requestHash: string;
-  done: boolean;
+  state: IdempotencyState;
   response?: unknown;
+  error?: IdempotencyError;
+  updatedAt: number;
 }
 
 export interface OutboxJob {
@@ -46,10 +56,45 @@ export interface OutboxJob {
   scenario?: string;
   attempts: number;
   leaseUntil: number;
-  state: "PENDING" | "DONE";
+  state: "PENDING" | "DONE" | "UNCERTAIN";
+  phase: "NEW" | "SUBMITTING" | "SUBMITTED";
 }
 
-export class MemoryStore {
+export interface ClaimedJob {
+  job: OutboxJob;
+  reconcile: boolean;
+}
+
+export interface DocumentStore {
+  getTenant(id: string): TenantProfile | undefined;
+  putTenant(tenant: TenantProfile): void;
+  getMember(uid: string, tenantId: string): { roles: string[] } | undefined;
+  putMember(uid: string, tenantId: string, roles: string[]): void;
+  getDocument(id: string): StoredDocument | undefined;
+  putDocument(doc: StoredDocument): void;
+  listDocuments(tenantId: string): StoredDocument[];
+  listAllDocuments(): StoredDocument[];
+  countDocuments(tenantId?: string): number;
+  getOriginal(id: string): Uint8Array | undefined;
+  putOriginal(id: string, bytes: Uint8Array): void;
+  addNote(note: NoteRecord): void;
+  getIdempotency(id: string): IdempotencyRecord | undefined;
+  putIdempotency(id: string, record: IdempotencyRecord): void;
+  getHash(tenantId: string, sha: string): string | undefined;
+  putHashIfAbsent(tenantId: string, sha: string, documentId: string): string;
+  getNumber(key: string): string | undefined;
+  putNumberIfAbsent(key: string, documentId: string): string;
+  nextSequence(tenantId: string): number;
+  addOutbox(job: OutboxJob): void;
+  claimOutbox(now: number, leaseMs: number): ClaimedJob | undefined;
+  saveOutbox(job: OutboxJob): void;
+  listOutbox(): OutboxJob[];
+  lock<T>(key: string, fn: () => Promise<T>): Promise<T>;
+  transaction<T>(fn: () => T): T;
+  close(): void;
+}
+
+export class MemoryStore implements DocumentStore {
   readonly documents = new Map<string, StoredDocument>();
   readonly originals = new Map<string, Uint8Array>();
   readonly notes: NoteRecord[] = [];
@@ -66,6 +111,119 @@ export class MemoryStore {
     return `${uid}|${tenantId}`;
   }
 
+  getTenant(id: string): TenantProfile | undefined {
+    return this.tenants.get(id);
+  }
+
+  putTenant(tenant: TenantProfile): void {
+    this.tenants.set(tenant.id, tenant);
+  }
+
+  getMember(uid: string, tenantId: string): { roles: string[] } | undefined {
+    return this.members.get(this.memberKey(uid, tenantId));
+  }
+
+  putMember(uid: string, tenantId: string, roles: string[]): void {
+    this.members.set(this.memberKey(uid, tenantId), { roles });
+  }
+
+  getDocument(id: string): StoredDocument | undefined {
+    return this.documents.get(id);
+  }
+
+  putDocument(doc: StoredDocument): void {
+    this.documents.set(doc.id, doc);
+  }
+
+  listDocuments(tenantId: string): StoredDocument[] {
+    return [...this.documents.values()]
+      .filter((doc) => doc.tenantId === tenantId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }
+
+  listAllDocuments(): StoredDocument[] {
+    return [...this.documents.values()];
+  }
+
+  countDocuments(tenantId?: string): number {
+    if (!tenantId) return this.documents.size;
+    let count = 0;
+    for (const doc of this.documents.values()) if (doc.tenantId === tenantId) count += 1;
+    return count;
+  }
+
+  getOriginal(id: string): Uint8Array | undefined {
+    return this.originals.get(id);
+  }
+
+  putOriginal(id: string, bytes: Uint8Array): void {
+    this.originals.set(id, bytes);
+  }
+
+  addNote(note: NoteRecord): void {
+    this.notes.push(note);
+  }
+
+  getIdempotency(id: string): IdempotencyRecord | undefined {
+    return this.idempotency.get(id);
+  }
+
+  putIdempotency(id: string, record: IdempotencyRecord): void {
+    this.idempotency.set(id, record);
+  }
+
+  getHash(tenantId: string, sha: string): string | undefined {
+    return this.hashes.get(`${tenantId}|${sha}`);
+  }
+
+  putHashIfAbsent(tenantId: string, sha: string, documentId: string): string {
+    const key = `${tenantId}|${sha}`;
+    const existing = this.hashes.get(key);
+    if (existing) return existing;
+    this.hashes.set(key, documentId);
+    return documentId;
+  }
+
+  getNumber(key: string): string | undefined {
+    return this.numbers.get(key);
+  }
+
+  putNumberIfAbsent(key: string, documentId: string): string {
+    const existing = this.numbers.get(key);
+    if (existing) return existing;
+    this.numbers.set(key, documentId);
+    return documentId;
+  }
+
+  nextSequence(tenantId: string): number {
+    const current = (this.sequences.get(tenantId) ?? 0) + 1;
+    this.sequences.set(tenantId, current);
+    return current;
+  }
+
+  addOutbox(job: OutboxJob): void {
+    this.outbox.push(job);
+  }
+
+  claimOutbox(now: number, leaseMs: number): ClaimedJob | undefined {
+    const job = this.outbox.find((item) => (item.state === "PENDING" || item.state === "UNCERTAIN") && item.leaseUntil < now);
+    if (!job) return undefined;
+    const reconcile = job.phase === "SUBMITTING" || job.phase === "SUBMITTED" || job.state === "UNCERTAIN";
+    job.leaseUntil = now + leaseMs;
+    job.attempts += 1;
+    return { job, reconcile };
+  }
+
+  saveOutbox(job: OutboxJob): void {
+    const index = this.outbox.findIndex((item) => item.id === job.id);
+    if (index >= 0) this.outbox[index] = job;
+    else this.outbox.push(job);
+  }
+
+  listOutbox(): OutboxJob[] {
+    return this.outbox.map((job) => ({ ...job }));
+  }
+
   async lock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.tails.get(key) ?? Promise.resolve();
     let release: () => void = () => undefined;
@@ -80,6 +238,12 @@ export class MemoryStore {
       release();
     }
   }
+
+  transaction<T>(fn: () => T): T {
+    return fn();
+  }
+
+  close(): void {}
 }
 
 export function sha256(bytes: Uint8Array): string {

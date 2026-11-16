@@ -3,6 +3,10 @@ dist/
 tools/validator/build/
 packages/validation/rules/cache/
 .env
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 android/efaktura-client/build/
 android/efaktura-client/.gradle/
 .DS_Store

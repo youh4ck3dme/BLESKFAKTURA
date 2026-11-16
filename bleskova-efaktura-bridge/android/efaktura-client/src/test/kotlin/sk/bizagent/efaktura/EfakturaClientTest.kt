@@ -76,6 +76,26 @@ class EfakturaClientTest {
         server.shutdown()
     }
 
+    @Test fun sendsTenantOnEveryCallAndParsesNestedSend() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"items":[]}"""))
+        server.enqueue(MockResponse().setBody("""{"id":"doc-9","delivery":{"status":"QUEUED","simulated":true,"productionReceipt":false}}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"PROVIDER_ACCEPTED","simulated":true,"productionReceipt":false}"""))
+        server.start()
+        val client = client(server)
+        client.listDocuments()
+        val sent = client.sendDocument("doc-9", "idem-send")
+        val delivery = client.getDeliveryState("doc-9")
+        val requests = buildList { repeat(3) { add(server.takeRequest()) } }
+        assertTrue(requests.all { it.getHeader("X-Tenant-Id") == "tenant-a" })
+        assertTrue(requests.all { it.path?.contains("/v1/tenants/tenant-a/") == true })
+        assertEquals(DeliveryStatus.QUEUED, sent.delivery?.status)
+        assertEquals(false, sent.delivery?.productionReceipt)
+        assertEquals(DeliveryStatus.PROVIDER_ACCEPTED, delivery.status)
+        assertEquals(false, delivery.productionReceipt)
+        server.shutdown()
+    }
+
     private fun client(server: MockWebServer): HttpEfakturaClient {
         val url = server.url("/").toString().replace("localhost", "127.0.0.1")
         return HttpEfakturaClient(url, "tenant-a", auth, appCheck)

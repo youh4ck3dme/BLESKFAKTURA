@@ -9,4 +9,12 @@ services:
       EFAKTURA_PROVIDER: local-sandbox
       EFAKTURA_EMULATOR_SECRET: local-only-not-a-production-secret
       EFAKTURA_SANDBOX_WEBHOOK_SECRET: local-sandbox-webhook-not-production
+      EFAKTURA_LOCAL_SEED: "1"
+      EFAKTURA_STORE: sqlite
+      EFAKTURA_DATA_DIR: /data
+      EFAKTURA_VALIDATOR_CACHE: /data/validator-cache
+    volumes:
+      - efaktura-data:/data
     # Firebase emulátory sa nespúšťajú. Nie sú predstierané ako zelený test.
+volumes:
+  efaktura-data:

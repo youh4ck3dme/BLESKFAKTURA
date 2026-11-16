@@ -45,12 +45,14 @@ public final class ValidatorMain {
     private static final int MAX_NODES = 20000;
 
     public static void main(String[] args) {
-        if (args.length != 2) {
-            System.err.println("usage: ValidatorMain <xml-file> <rules-root>");
+        if (args.length < 2 || args.length > 3) {
+            System.err.println("usage: ValidatorMain <xml-file> <rules-root> [cache-dir]");
             System.exit(2);
         }
         try {
-            String json = validate(Path.of(args[0]), Path.of(args[1]));
+            Path rules = Path.of(args[1]);
+            Path cache = args.length == 3 ? Path.of(args[2]) : rules.resolve("cache");
+            String json = validate(Path.of(args[0]), rules, cache);
             System.out.write(json.getBytes(StandardCharsets.UTF_8));
             System.out.println();
         } catch (Exception ex) {
@@ -60,12 +62,15 @@ public final class ValidatorMain {
         }
     }
 
-    static String validate(Path xml, Path rules) throws Exception {
+    static String validate(Path xml, Path rules, Path cache) throws Exception {
         byte[] bytes = Files.readAllBytes(xml);
         String text = new String(bytes, StandardCharsets.UTF_8);
         List<String> security = securityIssues(text);
         if (!security.isEmpty()) {
             return report("INVALID", security, "UNAVAILABLE", List.of(), "UNAVAILABLE", List.of(), "UNAVAILABLE", List.of(), sha256(bytes));
+        }
+        if (exceedsStructure(text)) {
+            return report("INVALID", List.of("XML depth or node limit exceeded before parse"), "UNAVAILABLE", List.of(), "UNAVAILABLE", List.of(), "UNAVAILABLE", List.of(), sha256(bytes));
         }
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
         dbf.setNamespaceAware(true);
@@ -133,14 +138,14 @@ public final class ValidatorMain {
         List<String> peppolIssues = new ArrayList<>();
         if (!"INVALID".equals(xsdStatus) && "VALID".equals(xsdStatus)) {
             try {
-                enIssues.addAll(schematron(doc, rules, "peppol/CEN-EN16931-UBL.sch"));
+                enIssues.addAll(schematron(doc, rules, cache, "peppol/CEN-EN16931-UBL.sch"));
                 en = enIssues.isEmpty() ? "VALID" : "INVALID";
             } catch (Exception ex) {
                 en = "UNAVAILABLE";
                 enIssues.add(safe(ex));
             }
             try {
-                peppolIssues.addAll(schematron(doc, rules, "peppol/PEPPOL-EN16931-UBL.sch"));
+                peppolIssues.addAll(schematron(doc, rules, cache, "peppol/PEPPOL-EN16931-UBL.sch"));
                 peppol = peppolIssues.isEmpty() ? "VALID" : "INVALID";
             } catch (Exception ex) {
                 peppol = "UNAVAILABLE";
@@ -170,9 +175,75 @@ public final class ValidatorMain {
         return false;
     }
 
-    private static List<String> schematron(Document doc, Path rules, String schRelative) throws Exception {
+    private static boolean exceedsStructure(String xml) {
+        int depth = 0;
+        int nodes = 0;
+        int i = 0;
+        int n = xml.length();
+        while (i < n) {
+            int lt = xml.indexOf('<', i);
+            if (lt < 0) break;
+            if (xml.startsWith("<!--", lt)) {
+                int end = xml.indexOf("-->", lt + 4);
+                if (end < 0) return true;
+                i = end + 3;
+                continue;
+            }
+            if (xml.startsWith("<![CDATA[", lt)) {
+                int end = xml.indexOf("]]>", lt + 9);
+                if (end < 0) return true;
+                i = end + 3;
+                continue;
+            }
+            if (xml.startsWith("<?", lt)) {
+                int end = xml.indexOf("?>", lt + 2);
+                if (end < 0) return true;
+                i = end + 2;
+                continue;
+            }
+            if (xml.startsWith("<!", lt)) return true;
+            if (xml.startsWith("</", lt)) {
+                depth--;
+                int end = xml.indexOf('>', lt + 2);
+                if (end < 0) return true;
+                i = end + 1;
+                continue;
+            }
+            nodes++;
+            if (nodes > MAX_NODES || depth + 1 > MAX_DEPTH) return true;
+            int j = lt + 1;
+            char quote = 0;
+            boolean closed = false;
+            while (j < n) {
+                char ch = xml.charAt(j);
+                if (quote != 0) {
+                    if (ch == quote) quote = 0;
+                    j++;
+                    continue;
+                }
+                if (ch == '"' || ch == '\'') {
+                    quote = ch;
+                    j++;
+                    continue;
+                }
+                if (ch == '>') {
+                    closed = true;
+                    break;
+                }
+                j++;
+            }
+            if (!closed) return true;
+            boolean selfClosing = j > lt && xml.charAt(j - 1) == '/';
+            if (!selfClosing) depth++;
+            if (depth > MAX_DEPTH) return true;
+            i = j + 1;
+        }
+        return false;
+    }
+
+    private static List<String> schematron(Document doc, Path rules, Path cacheDir, String schRelative) throws Exception {
         Path sch = rules.resolve(schRelative);
-        Path cache = compiled(rules, sch);
+        Path cache = compiled(rules, cacheDir, sch);
         Processor processor = new Processor(false);
         processor.setConfigurationProperty("http://saxon.sf.net/feature/allowedProtocols", "");
         XsltCompiler compiler = processor.newXsltCompiler();
@@ -186,10 +257,9 @@ public final class ValidatorMain {
         return failedAsserts(out.toString());
     }
 
-    private static Path compiled(Path rules, Path sch) throws Exception {
+    private static Path compiled(Path rules, Path cacheDir, Path sch) throws Exception {
         byte[] raw = Files.readAllBytes(sch);
         String hash = sha256(raw).substring(0, 16);
-        Path cacheDir = rules.resolve("cache");
         Files.createDirectories(cacheDir);
         Path xsl = cacheDir.resolve(sch.getFileName().toString() + "." + hash + ".xsl");
         if (Files.exists(xsl)) return xsl;

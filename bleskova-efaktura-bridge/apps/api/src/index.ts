@@ -1,23 +1,51 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { composeReport, runStandardsEngine } from "../../../packages/validation/src/engine.js";
 import { inspectUbl, serializeUbl } from "../../../packages/xml/src/ubl.js";
 import { assertXmlLimits } from "../../../packages/xml/src/secure.js";
 import { LocalSandboxProvider, UnconfiguredProvider } from "../../../packages/provider/src/index.js";
 import { createDocumentService } from "../../../packages/core/src/service.js";
+import { MemoryStore, type DocumentStore } from "../../../packages/core/src/memory.js";
 import { startServer } from "./server.js";
+import { assertBoot, loadEnvFile, readBootConfig } from "./env.js";
+import { applyLocalSeed } from "./seed.js";
 
-const env = process.env.EFAKTURA_ENV === "production" ? "production" : "local";
-const authMode = process.env.EFAKTURA_AUTH_MODE === "emulator" ? "emulator" : "disabled";
-const providerName = process.env.EFAKTURA_PROVIDER ?? (env === "production" ? "unconfigured" : "local-sandbox");
-if (env === "production" && (authMode === "emulator" || providerName === "local-sandbox")) {
+const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+loadEnvFile(path.join(process.cwd(), ".env"));
+loadEnvFile(path.join(moduleRoot, ".env"));
+const config = readBootConfig(moduleRoot);
+try {
+  assertBoot(config);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "Konfigurácia bola odmietnutá.");
+  process.exit(1);
+}
+if (config.env === "production" && (config.authMode === "emulator" || config.providerName === "local-sandbox")) {
   console.error("Produkcia odmietla emulátor alebo sandbox provider.");
   process.exit(1);
 }
-const provider = providerName === "local-sandbox"
-  ? new LocalSandboxProvider(process.env.EFAKTURA_SANDBOX_WEBHOOK_SECRET || "local-sandbox-webhook-not-production")
+
+process.env.EFAKTURA_VALIDATOR_CACHE = config.validatorCache;
+process.env.EFAKTURA_VALIDATOR_TIMEOUT_MS = String(config.validatorTimeoutMs);
+
+const provider = config.providerName === "local-sandbox"
+  ? new LocalSandboxProvider(config.webhookSecret)
   : new UnconfiguredProvider();
+
+const store = await openStore(config.store, config.dataDir);
+if (config.seed) {
+  try {
+    applyLocalSeed(config.env, store);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Seed bol odmietnutý.");
+    process.exit(1);
+  }
+}
+
 const service = createDocumentService({
-  env,
+  env: config.env,
   provider,
+  store,
   parser: {
     inspect(xml, direction) {
       assertXmlLimits(Buffer.from(xml));
@@ -27,20 +55,59 @@ const service = createDocumentService({
   },
   validator: {
     async validate(xml, domainIssues) {
-      const engine = await runStandardsEngine(xml, Number(process.env.EFAKTURA_VALIDATOR_TIMEOUT_MS ?? "20000"));
+      const engine = await runStandardsEngine(xml, config.validatorTimeoutMs);
       if (engine.engineError) throw new Error(engine.engineError);
       return composeReport({ sha256: engine.sha256, domainIssues, engine });
     },
   },
 });
-const port = Number(process.env.EFAKTURA_PORT ?? "8088");
+
+let stopped = false;
+let ticking: Promise<unknown> = Promise.resolve();
+async function workerLoop(): Promise<void> {
+  while (!stopped) {
+    ticking = service.workerTick().catch(() => ({ processed: false }));
+    try {
+      await ticking;
+    } catch {
+      console.error(JSON.stringify({ code: "WORKER_ERROR" }));
+    }
+    await new Promise((resolve) => setTimeout(resolve, config.workerMs));
+  }
+}
+const worker = workerLoop();
+
 const started = await startServer({
   service,
-  env,
-  authMode,
-  emulatorSecret: process.env.EFAKTURA_EMULATOR_SECRET || "local-only-not-a-production-secret",
+  env: config.env,
+  authMode: config.authMode,
+  emulatorSecret: config.emulatorSecret,
   rateLimitPerMinute: 120,
-  port,
+  port: config.port,
   host: "0.0.0.0",
 });
-console.log(JSON.stringify({ listening: started.url }));
+console.log(JSON.stringify({
+  listening: started.url,
+  store: config.store,
+  seed: config.seed,
+  productionInfra: false,
+  productionEligible: false,
+}));
+
+async function shutdown(): Promise<void> {
+  if (stopped) return;
+  stopped = true;
+  await new Promise<void>((resolve) => started.server.close(() => resolve()));
+  await ticking;
+  await worker;
+  store.close();
+  process.exit(0);
+}
+process.on("SIGTERM", () => { void shutdown(); });
+process.on("SIGINT", () => { void shutdown(); });
+
+async function openStore(kind: "sqlite" | "memory", dataDir: string): Promise<DocumentStore> {
+  if (kind === "memory") return new MemoryStore();
+  const { SqliteStore } = await import("../../../packages/core/src/sqlite.js");
+  return new SqliteStore(path.join(dataDir, "bridge.sqlite"));
+}

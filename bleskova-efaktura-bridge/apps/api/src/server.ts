@@ -1,8 +1,9 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { RequestContext } from "../../../packages/contracts/src/index.js";
 import { AppError } from "../../../packages/core/src/errors.js";
 import type { DocumentService } from "../../../packages/core/src/service.js";
+import { verifyEmuToken } from "./emu-token.js";
 
 export interface ApiOptions {
   service: DocumentService;
@@ -148,23 +149,11 @@ function authenticate(req: IncomingMessage, options: ApiOptions): RequestContext
   }
   const auth = req.headers.authorization?.toString() || "";
   const appCheck = req.headers["x-firebase-appcheck"]?.toString() || "";
-  const user = verifyEmu(auth.replace(/^Bearer\s+/i, ""), options.emulatorSecret, "user");
-  verifyEmu(appCheck, options.emulatorSecret, "appcheck");
+  const user = verifyEmuToken(auth.replace(/^Bearer\s+/i, ""), options.emulatorSecret, "user");
+  verifyEmuToken(appCheck, options.emulatorSecret, "appcheck");
   const tenantHeader = req.headers["x-tenant-id"]?.toString();
   if (!user.uid || !tenantHeader) throw new AppError("UNAUTHORIZED", 401, "Chýba identita alebo tenant.");
   return { uid: user.uid, tenantId: tenantHeader, roles: [] };
-}
-
-function verifyEmu(token: string, secret: string, typ: string): { uid?: string; typ: string; exp: number } {
-  const [prefix, body, sig] = token.split(".");
-  if (prefix !== "emu" || !body || !sig) throw new AppError("UNAUTHORIZED", 401, "Token bol odmietnutý.");
-  const expected = createHmac("sha256", secret).update(body).digest("base64url");
-  const a = Buffer.from(expected);
-  const b = Buffer.from(sig);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) throw new AppError("UNAUTHORIZED", 401, "Token bol odmietnutý.");
-  const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { uid?: string; typ: string; exp: number };
-  if (payload.typ !== typ || payload.exp < Date.now()) throw new AppError("UNAUTHORIZED", 401, "Token je neplatný alebo exspirovaný.");
-  return payload;
 }
 
 function rateLimit(tenantId: string, perMinute: number): void {

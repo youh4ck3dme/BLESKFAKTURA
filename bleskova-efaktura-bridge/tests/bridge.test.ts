@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { checkDocument } from "../packages/core/src/domain-check.js";
 import { AppError } from "../packages/core/src/errors.js";
-import { sha256 } from "../packages/core/src/memory.js";
+import { MemoryStore, sha256 } from "../packages/core/src/memory.js";
 import { createDocumentService, type DocumentService } from "../packages/core/src/service.js";
 import { assertServiceAuthorization, evaluateClientRule } from "../packages/firebase/src/rules.js";
 import { LocalSandboxProvider, UnconfiguredProvider } from "../packages/provider/src/index.js";
@@ -198,7 +198,7 @@ test("validator outage blocks send", async () => {
   const report = await broken.validateDraft(supplierCtx, String(draft.id), "v");
   assert.equal(report.status, "UNAVAILABLE");
   assert.equal(report.productionEligible, false);
-  const issuedBypass = broken.store.documents.get(String(draft.id))!;
+  const issuedBypass = (broken.store as MemoryStore).documents.get(String(draft.id))!;
   issuedBypass.lifecycle = "ISSUED";
   issuedBypass.canonical = { ...issuedBypass.canonical!, direction: "OUTBOUND" };
   await assert.rejects(() => broken.send(supplierCtx, String(draft.id), "send"), (error: unknown) => error instanceof AppError && error.code === "VALIDATOR_UNAVAILABLE");

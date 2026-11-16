@@ -26,18 +26,34 @@ project(":efaktura-client").projectDir = file("bleskova-efaktura-bridge/android/
 implementation(project(":efaktura-client"))
 ```
 
-Klient sa skladá s base URL bridge API, nie s Firebase project ID v knižnici:
+Klient sa skladá s base URL bridge API, nie s Firebase project ID v knižnici.
+Firebase Auth a App Check v tomto module **nie sú otestované** proti reálnemu projektu. Príklad nižšie je len kompilovateľný náčrt, nie zelený test.
 
 ```kotlin
+val expectedUid = firebaseUser.uid
 val client = HttpEfakturaClient(
     baseUrl = BuildConfig.EFAKTURA_BASE_URL,
     tenantId = activeTenantId,
-    authTokens = AuthTokenProvider { firebaseUser.getIdToken(false).await() },
-    appCheckTokens = AppCheckTokenProvider { FirebaseAppCheck.getInstance().getToken(false).await().token }
+    authTokens = AuthTokenProvider {
+        val current = FirebaseAuth.getInstance().currentUser
+            ?: throw IllegalStateException("Žiadny prihlásený používateľ")
+        if (current.uid != expectedUid) throw IllegalStateException("Účet sa počas operácie zmenil")
+        val token = current.getIdToken(false).await().token
+        token ?: throw IllegalStateException("Firebase vrátil prázdny token")
+    },
+    appCheckTokens = AppCheckTokenProvider {
+        val result = FirebaseAppCheck.getInstance().getToken(false).await()
+        result.token ?: throw IllegalStateException("App Check vrátil prázdny token")
+    }
 )
 ```
 
-Volanie z obrazovky ide cez `examples/android-integration/EfakturaImportViewModel.kt`. Pri zmene účtu sa job zruší. Release nesmie mať demo login.
+`getIdToken(false).await()` vracia `GetTokenResult`, nie `String`. Do klienta ide až `.token`.
+Každé volanie klienta posiela `X-Tenant-Id` aj cestu `/v1/tenants/{id}`. Ani jedno nie je dôkaz členstva. Server načíta členstvo uid vo firme. Klient nesmie posielať rolu ako dôkaz.
+
+`sendDocument` vracia doklad. Stav je v `document.delivery`, nie ako top-level `DeliveryDto`. Samotný stav číta `getDeliveryState`.
+
+Volanie z obrazovky ide cez `examples/android-integration/EfakturaImportViewModel.kt`. Nový súbor dostane nový `Idempotency-Key`. Retry tej istej operácie použije pôvodný kľúč. Pri zmene účtu sa job zruší. Release nesmie mať demo login. ViewModel nie je zapojený do aplikácie.
 
 Room: `examples/android-integration/RoomMigrationPlan.kt`. Migrácia 1 → 2 pridá `efaktura_documents` a `efaktura_notes`. XML ostáva celé podľa sha256. Poznámka nie je súčasť originálu. Rollback neresetuje `invoices`.
 

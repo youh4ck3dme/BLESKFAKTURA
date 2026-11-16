@@ -11,11 +11,12 @@
     "build:validator": "mkdir -p tools/validator/build && javac --release 17 -cp tools/validator/lib/Saxon-HE-12.9.jar:tools/validator/lib/xmlresolver-5.3.3.jar:tools/validator/lib/xmlresolver-5.3.3-data.jar -d tools/validator/build tools/validator/src/main/java/sk/bizagent/efaktura/validator/ValidatorMain.java",
     "build": "npm run build:validator && tsc -p tsconfig.json",
     "test": "npm run build && node --test --test-concurrency=1 dist/tests/*.test.js",
-    "start": "node dist/apps/api/src/index.js",
+    "start": "node --disable-warning=ExperimentalWarning dist/apps/api/src/index.js",
+    "tokens": "node --disable-warning=ExperimentalWarning dist/apps/api/src/tokens.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@xmldom/xmldom": "0.9.8",
+    "@xmldom/xmldom": "0.9.12",
     "decimal.js": "10.5.0"
   },
   "devDependencies": {

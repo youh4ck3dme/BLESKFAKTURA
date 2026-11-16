@@ -15,6 +15,7 @@ export class XmlRejected extends Error {
   readonly ruleId: string;
   constructor(ruleId: string, message: string) {
     super(message);
+    this.name = "XmlRejected";
     this.ruleId = ruleId;
   }
 }
@@ -24,17 +25,96 @@ export function assertXmlLimits(bytes: Uint8Array): string {
     throw new XmlRejected("XML_LIMIT", "Súbor prekračuje limit veľkosti.");
   }
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  rejectDangerousMarkup(text);
+  return text;
+}
+
+function rejectDangerousMarkup(text: string): void {
   const lower = text.toLowerCase();
-  if (lower.includes("<!doctype") || lower.includes("<!entity") || lower.includes("<!element")) {
+  if (lower.includes("<!doctype") || lower.includes("<!entity") || lower.includes("<!element") || lower.includes("<!attlist")) {
     throw new XmlRejected("XML_DTD", "DTD a entity deklarácie sú zakázané.");
   }
   if (lower.includes("<xi:include") || lower.includes("xinclude")) {
     throw new XmlRejected("XML_XINCLUDE", "XInclude je zakázaný.");
   }
-  return text;
+}
+
+/**
+ * Iterative scan. Runs before DOMParser so a small deeply nested payload
+ * cannot grow a DOM or blow the parser stack first.
+ */
+export function preflightXml(xml: string): void {
+  if (xml.length > MAX_XML_BYTES) throw new XmlRejected("XML_LIMIT", "Súbor prekračuje limit veľkosti.");
+  rejectDangerousMarkup(xml);
+  let depth = 0;
+  let nodes = 0;
+  let i = 0;
+  const n = xml.length;
+  while (i < n) {
+    const lt = xml.indexOf("<", i);
+    if (lt < 0) break;
+    if (xml.startsWith("<!--", lt)) {
+      const end = xml.indexOf("-->", lt + 4);
+      if (end < 0) throw new XmlRejected("XML_PARSE", "Neuzatvorený komentár.");
+      i = end + 3;
+      continue;
+    }
+    if (xml.startsWith("<![CDATA[", lt)) {
+      const end = xml.indexOf("]]>", lt + 9);
+      if (end < 0) throw new XmlRejected("XML_PARSE", "Neuzatvorená CDATA.");
+      i = end + 3;
+      continue;
+    }
+    if (xml.startsWith("<?", lt)) {
+      const end = xml.indexOf("?>", lt + 2);
+      if (end < 0) throw new XmlRejected("XML_PARSE", "Neuzatvorená inštrukcia.");
+      i = end + 2;
+      continue;
+    }
+    if (xml.startsWith("<!", lt)) throw new XmlRejected("XML_DTD", "DTD a entity deklarácie sú zakázané.");
+    if (xml.startsWith("</", lt)) {
+      depth -= 1;
+      if (depth < 0) throw new XmlRejected("XML_PARSE", "XML má prebytočný uzatvárací tag.");
+      const end = xml.indexOf(">", lt + 2);
+      if (end < 0) throw new XmlRejected("XML_PARSE", "Neuzatvorený tag.");
+      i = end + 1;
+      continue;
+    }
+    nodes += 1;
+    if (nodes > MAX_NODES || depth + 1 > MAX_DEPTH) {
+      throw new XmlRejected("XML_LIMIT", "XML prekračuje limit hĺbky alebo počtu uzlov.");
+    }
+    let j = lt + 1;
+    let quote = "";
+    let closed = false;
+    while (j < n) {
+      const ch = xml[j] ?? "";
+      if (quote) {
+        if (ch === quote) quote = "";
+        j += 1;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        j += 1;
+        continue;
+      }
+      if (ch === ">") {
+        closed = true;
+        break;
+      }
+      j += 1;
+    }
+    if (!closed) throw new XmlRejected("XML_PARSE", "Neuzatvorený tag.");
+    const selfClosing = j > lt && xml[j - 1] === "/";
+    if (!selfClosing) depth += 1;
+    if (depth > MAX_DEPTH) throw new XmlRejected("XML_LIMIT", "XML prekračuje limit hĺbky alebo počtu uzlov.");
+    i = j + 1;
+  }
 }
 
 export function parseSecure(xml: string): Document {
+  preflightXml(xml);
   const messages: string[] = [];
   const doc = new DOMParser({
     onError(level, msg) {

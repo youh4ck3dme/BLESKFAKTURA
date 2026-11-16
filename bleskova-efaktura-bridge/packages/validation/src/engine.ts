@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -44,7 +45,9 @@ export async function runStandardsEngine(xml: Uint8Array, timeoutMs = 20000): Pr
   await writeFile(file, xml);
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
-      const child = spawn("java", ["-cp", VALIDATOR_CP, "sk.bizagent.efaktura.validator.ValidatorMain", file, RULES_ROOT], {
+      const cacheDir = process.env.EFAKTURA_VALIDATOR_CACHE || path.join(RULES_ROOT, "cache");
+      mkdirSync(cacheDir, { recursive: true });
+      const child = spawn("java", ["-cp", VALIDATOR_CP, "sk.bizagent.efaktura.validator.ValidatorMain", file, RULES_ROOT, cacheDir], {
         stdio: ["ignore", "pipe", "pipe"],
       });
       const out: Buffer[] = [];

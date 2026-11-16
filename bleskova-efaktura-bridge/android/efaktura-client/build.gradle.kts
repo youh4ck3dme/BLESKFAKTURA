@@ -6,7 +6,10 @@ plugins {
 group = "sk.bizagent.efaktura"
 version = "0.1.0"
 
-kotlin { jvmToolchain(17) }
+kotlin {
+    jvmToolchain(17)
+    sourceSets.getByName("test").kotlin.srcDir("../../examples/android-integration")
+}
 
 dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.12.0")

@@ -4,8 +4,11 @@ info:
   version: 0.1.0
   description: |
     Vlastné API modulu, nie API finančnej správy ani certifikovaného poštára.
-    Peniaze sú desatinné reťazce. Produkčné odoslanie je zatvorené, kým nie je
-    nakonfigurovaný reálny provider a úplná validácia vrátane SK pravidiel.
+    Peniaze sú desatinné reťazce. Každé autentifikované volanie posiela `X-Tenant-Id`.
+    Hlavička ani cesta nie sú dôkaz členstva; server overuje členstvo uid vo firme.
+    POST /documents/{id}/send vracia doklad s vnoreným `delivery`, nie holý stav.
+    Produkčné odoslanie je zatvorené, kým nie je nakonfigurovaný reálny provider
+    a úplná validácia vrátane SK pravidiel.
 servers:
   - url: http://127.0.0.1:8088
 security:
@@ -30,6 +33,7 @@ paths:
     post:
       parameters:
         - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/TenantHeader"
         - $ref: "#/components/parameters/IdempotencyKey"
         - name: direction
           in: query
@@ -47,6 +51,7 @@ paths:
     get:
       parameters:
         - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/TenantHeader"
         - name: cursor
           in: query
           schema: { type: string }
@@ -57,13 +62,13 @@ paths:
         "200": { description: Stránka dokladov }
   /v1/tenants/{tenantId}/documents/{id}:
     get:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/DocumentId" } ]
       responses:
         "200": { description: Detail }
         "404": { $ref: "#/components/responses/Error" }
   /v1/tenants/{tenantId}/documents/{id}/original:
     get:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/DocumentId" } ]
       responses:
         "200":
           description: Byte-identický originál
@@ -72,7 +77,7 @@ paths:
               schema: { type: string, format: binary }
   /v1/tenants/{tenantId}/documents/{id}/archive:
     get:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/DocumentId" } ]
       responses:
         "200":
           description: ZIP s originálom a metadátami
@@ -81,7 +86,7 @@ paths:
               schema: { type: string, format: binary }
   /v1/tenants/{tenantId}/drafts:
     post:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
       requestBody:
         required: true
         content:
@@ -91,13 +96,14 @@ paths:
         "201": { description: Draft }
   /v1/tenants/{tenantId}/drafts/{id}/validate:
     post:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/DocumentId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
       responses:
         "200": { description: Validačný report, content: { application/json: { schema: { $ref: "#/components/schemas/ValidationReport" } } } }
   /v1/tenants/{tenantId}/drafts/{id}/issue:
     post:
       parameters:
         - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/TenantHeader"
         - $ref: "#/components/parameters/DocumentId"
         - $ref: "#/components/parameters/IdempotencyKey"
         - name: X-Expected-Version
@@ -108,18 +114,26 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
   /v1/tenants/{tenantId}/documents/{id}/send:
     post:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/DocumentId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
       responses:
-        "202": { description: Zaradené do outboxu alebo existujúci stav }
+        "202":
+          description: Zaradené do outboxu. Odpoveď je doklad, stav je v delivery.status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
         "409": { $ref: "#/components/responses/Error" }
   /v1/tenants/{tenantId}/documents/{id}/delivery:
     get:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/DocumentId" } ]
       responses:
-        "200": { description: Stav doručenia, nie úhrada }
+        "200":
+          description: Stav doručenia, nie úhrada. Nie je to doklad.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Delivery" }
   /v1/tenants/{tenantId}/documents/{id}/notes:
     post:
-      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/TenantHeader" }, { $ref: "#/components/parameters/DocumentId" } ]
       requestBody:
         required: true
         content:
@@ -175,6 +189,12 @@ components:
       name: Idempotency-Key
       in: header
       required: true
+      schema: { type: string }
+    TenantHeader:
+      name: X-Tenant-Id
+      in: header
+      required: true
+      description: Musí sa zhodovať s tenantId v ceste. Nie je to oprávnenie.
       schema: { type: string }
   responses:
     Error:
@@ -243,3 +263,23 @@ components:
       type: object
       description: Normalizovaný doklad. Čísla sú stringy, nie JSON number.
       additionalProperties: true
+    Delivery:
+      type: object
+      required: [status, simulated, productionReceipt]
+      properties:
+        status: { $ref: "#/components/schemas/DeliveryStatus" }
+        simulated: { type: boolean }
+        productionReceipt: { type: boolean }
+        providerMessageId: { type: string }
+        detail: { type: string }
+    Document:
+      type: object
+      required: [id, delivery]
+      properties:
+        id: { type: string }
+        lifecycle: { type: string }
+        number: { type: string }
+        sha256: { type: string }
+        payableAmount: { type: string }
+        delivery: { $ref: "#/components/schemas/Delivery" }
+        validation: { $ref: "#/components/schemas/ValidationReport" }
