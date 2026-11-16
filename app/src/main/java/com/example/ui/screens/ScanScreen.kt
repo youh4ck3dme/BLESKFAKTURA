@@ -103,6 +103,7 @@ import java.math.BigDecimal
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,9 +111,12 @@ fun ScanScreen(
     viewModel: InvoiceViewModel,
     onNavigateBack: () -> Unit
 ) {
+    var isSaving by rememberSaveable { mutableStateOf(false) }
     BackHandler {
-        viewModel.startNewScan()
-        onNavigateBack()
+        if (!isSaving) {
+            viewModel.startNewScan()
+            onNavigateBack()
+        }
     }
 
     val context = LocalContext.current
@@ -131,6 +135,7 @@ fun ScanScreen(
 
     // Clear staged file when ScanState resets to Idle without pending URI
     LaunchedEffect(scanState) {
+        if (scanState is ScanUiState.Idle) isSaving = false
         if (scanState is ScanUiState.Success || scanState is ScanUiState.Error) {
             // Keep preview reference until user cancels/saves
         }
@@ -256,7 +261,8 @@ fun ScanScreen(
                         },
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
-                            .testTag("back_button")
+                            .testTag("back_button"),
+                        enabled = !isSaving
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -757,7 +763,6 @@ fun ScanScreen(
                 }
 
                 is ScanUiState.Success -> {
-                    var isSaving by remember { mutableStateOf(false) }
                     ReviewScannedInvoiceForm(
                         extracted = state.extractedData,
                         bitmap = state.bitmap,
@@ -770,12 +775,12 @@ fun ScanScreen(
                         onConfirm = { invoice ->
                             if (isSaving) return@ReviewScannedInvoiceForm
                             isSaving = true
-                            stagedUriString = null
-                            stagedBitmap = null
                             viewModel.saveScannedInvoice(
                                 invoice = invoice,
                                 bitmap = state.bitmap,
                                 onSaved = {
+                                    stagedUriString = null
+                                    stagedBitmap = null
                                     isSaving = false
                                     onNavigateBack()
                                 },
@@ -862,11 +867,12 @@ fun ReviewScannedInvoiceForm(
         extracted.vatAmount?.let { SlovakFinanceUtils.doubleToCents(it) }
     }
 
+    val reviewInvoiceId = rememberSaveable(extracted) { UUID.randomUUID().toString() }
     var supplierName by rememberSaveable { mutableStateOf(extracted.supplierName) }
     var ico by rememberSaveable { mutableStateOf(extracted.ico ?: "") }
     var dic by rememberSaveable { mutableStateOf(extracted.dic ?: "") }
     var totalAmountStr by rememberSaveable { mutableStateOf(SlovakFinanceUtils.formatCentsForInput(initialTotalCents)) }
-    var vatRateStr by rememberSaveable { mutableStateOf(initialVatRate?.toString()?.replace('.', ',').orEmpty()) }
+    var vatRateStr by rememberSaveable { mutableStateOf(SlovakFinanceUtils.formatOptionalVatRateForInput(initialVatRate)) }
     var vatAmountStr by rememberSaveable { mutableStateOf(initialVatCents?.let(SlovakFinanceUtils::formatCentsForInput).orEmpty()) }
     var issueDate by rememberSaveable { mutableStateOf(extracted.issueDate) }
     var dueDate by rememberSaveable { mutableStateOf("") }
@@ -1170,7 +1176,7 @@ fun ReviewScannedInvoiceForm(
                         val totalCents = SlovakFinanceUtils.bigDecimalToCents(parsedAmount)
 
                         val parsedRate = SlovakFinanceUtils.parseSlovakDecimal(vatRateStr)
-                        if (vatRateStr.isNotBlank() && (parsedRate == null || parsedRate < BigDecimal.ZERO || parsedRate > BigDecimal(100))) {
+                        if (!SlovakFinanceUtils.isValidOptionalVatRate(vatRateStr)) {
                             validationError = "Sadzba DPH musí byť v rozsahu 0 až 100 %."
                             return@Button
                         }
@@ -1208,6 +1214,7 @@ fun ReviewScannedInvoiceForm(
 
                         onConfirm(
                             Invoice(
+                                id = reviewInvoiceId,
                                 supplierName = trimmedSupplier,
                                 ico = ico.trim().ifBlank { null },
                                 dic = dic.trim().ifBlank { null },

@@ -167,9 +167,26 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
 
     // --- Invoices Management Actions ---
 
-    fun saveInvoice(invoice: Invoice) {
+    fun saveInvoice(
+        invoice: Invoice,
+        onSaved: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val ownerUid = currentUser.value?.uid
+        if (ownerUid == null || (invoice.userId.isNotBlank() && invoice.userId != ownerUid)) {
+            onError("Účet sa zmenil. Doklad nebol uložený do iného profilu.")
+            return
+        }
         viewModelScope.launch {
-            repository.insertInvoice(invoice)
+            try {
+                if (currentUser.value?.uid != ownerUid) throw IllegalStateException("Účet sa zmenil.")
+                repository.insertInvoice(invoice.copy(userId = ownerUid)).getOrThrow()
+                if (currentUser.value?.uid == ownerUid) onSaved()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (currentUser.value?.uid == ownerUid) onError(e.localizedMessage ?: "Doklad sa nepodarilo uložiť. Skúste to znova.")
+            }
         }
     }
 
@@ -179,26 +196,41 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
         onSaved: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
+        // Capture ownership before archiveReceiptBitmap suspends, never after an account switch.
+        val ownerUid = currentUser.value?.uid
+        if (ownerUid == null || (invoice.userId.isNotBlank() && invoice.userId != ownerUid)) {
+            onError("Účet sa zmenil. Doklad nebol uložený do iného profilu.")
+            return
+        }
         viewModelScope.launch {
+            var newArchive: String? = null
+            var saved = false
             try {
-                val archivedPath = if (bitmap != null) {
+                if (currentUser.value?.uid != ownerUid) throw IllegalStateException("Účet sa zmenil.")
+                newArchive = if (bitmap != null) {
                     ReceiptImageProcessor.archiveReceiptBitmap(getApplication(), bitmap, invoice.id)
                         ?: throw IllegalStateException("Snímku dokladu sa nepodarilo uložiť do zariadenia.")
-                } else {
-                    null
+                } else null
+                if (currentUser.value?.uid != ownerUid) throw IllegalStateException("Účet sa počas ukladania zmenil.")
+                val finalInvoice = invoice.copy(userId = ownerUid, imageUrl = newArchive ?: invoice.imageUrl)
+                repository.insertInvoice(finalInvoice).getOrThrow()
+                saved = true
+                if (currentUser.value?.uid == ownerUid) {
+                    _scanState.value = ScanUiState.Idle
+                    onSaved()
                 }
-                val finalInvoice = invoice.copy(imageUrl = archivedPath ?: invoice.imageUrl)
-                val result = repository.insertInvoice(finalInvoice)
-                if (result.isFailure) {
-                    // The repository keeps a local copy and exposes the cloud error on the dashboard.
-                    Log.w("InvoiceViewModel", "Invoice saved locally; cloud synchronization pending")
-                }
-                _scanState.value = ScanUiState.Idle
-                onSaved()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                onError(e.localizedMessage ?: "Doklad sa nepodarilo uložiť. Skúste to znova.")
+                if (currentUser.value?.uid == ownerUid) {
+                    onError(e.localizedMessage ?: "Doklad sa nepodarilo uložiť. Fotka a formulár zostávajú otvorené na opakovanie.")
+                }
+            } finally {
+                if (!saved && newArchive != invoice.imageUrl) {
+                    withContext(NonCancellable) {
+                        ReceiptImageProcessor.deleteArchivedReceipt(getApplication(), newArchive)
+                    }
+                }
             }
         }
     }

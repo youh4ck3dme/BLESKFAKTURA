@@ -6,7 +6,7 @@ import java.util.Locale
 
 /** Conservative OCR suggestions. Missing data remains empty for explicit user review. */
 internal object LocalReceiptParser {
-    private val amountPattern = Regex("""(?<![\d.,])(?:\d{1,3}(?:[ \u00A0]\d{3})+|\d+)[,.]\d{2}(?!\d)""")
+    private val amountPattern = Regex("""(?<![\d.,+\-−–—])(?:[+\-−–—]\s*)?(?:\d{1,3}(?:[ \u00A0]\d{3})+|\d+)[,.]\d{2}(?!\d)""")
     private val datePattern = Regex("""\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\.\s?\d{1,2}\.\s?\d{4})\b""")
     private val receiptMarker = Regex("""\b(ICO|DIC|DPH|SPOLU|CELKOM|FAKTURA|DOKLAD|UCTENKA|TOTAL|UHRAD[AEU])\b""")
 
@@ -36,12 +36,17 @@ internal object LocalReceiptParser {
             if (value.contains("BEZ DPH") || value.contains("ZAKLAD")) return@mapIndexedNotNull null
             val sameLine = amountPattern.findAll(line).lastOrNull()?.value
             val nextLine = lines.getOrNull(index + 1)?.let { amountPattern.findAll(it).lastOrNull()?.value }
-            val amount = (sameLine ?: nextLine)?.let(SlovakFinanceUtils::parseSlovakDecimal)
+            val amount = (sameLine ?: nextLine)?.replace(Regex("""[−–—]"""), "-")
+                ?.let(SlovakFinanceUtils::parseSlovakDecimal)
                 ?: return@mapIndexedNotNull null
-            if (amount <= BigDecimal.ZERO || amount > BigDecimal(1_000_000)) return@mapIndexedNotNull null
+            if (amount.abs() > BigDecimal(1_000_000)) return@mapIndexedNotNull null
             priority to amount
         }
-        val total = totalCandidates.maxByOrNull { it.first }?.second?.toDouble() ?: 0.0
+        val explicitTotal = totalCandidates.maxByOrNull { it.first }?.second
+        if (explicitTotal != null && explicitTotal <= BigDecimal.ZERO) {
+            return AiExtractionResult.InvalidDocument("Doklady so zápornou alebo nulovou celkovou sumou zatiaľ nie sú podporované.")
+        }
+        val total = explicitTotal?.toDouble() ?: 0.0
         val issueDate = lines.asSequence()
             .filterNot { normalized(it).contains("SPLATNOST") }
             .flatMap { datePattern.findAll(it).map { match -> match.value.replace(" ", "") } }

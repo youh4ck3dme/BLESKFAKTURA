@@ -45,7 +45,15 @@ class GreetingScreenshotTest {
     composeTestRule.onNodeWithText("Blesková Faktúra").assertIsDisplayed()
     val screenshot = File("build/reports/screenshots/${BuildConfig.FLAVOR}/brand_header.png")
     check(screenshot.parentFile.mkdirs() || screenshot.parentFile.isDirectory)
-    composeTestRule.onRoot().captureRoboImage(filePath = screenshot.path)
-    assertTrue("Native screenshot was not written", screenshot.isFile && screenshot.length() > 0L)
+    val previousRecord = System.getProperty("roborazzi.test.record")
+    try {
+      // A normal unit-test task otherwise leaves captureRoboImage disabled by default.
+      System.setProperty("roborazzi.test.record", "true")
+      composeTestRule.onRoot().captureRoboImage(filePath = screenshot.absolutePath)
+      assertTrue("Native screenshot was not written", screenshot.isFile && screenshot.length() > 0L)
+    } finally {
+      if (previousRecord == null) System.clearProperty("roborazzi.test.record")
+      else System.setProperty("roborazzi.test.record", previousRecord)
+    }
   }
 }

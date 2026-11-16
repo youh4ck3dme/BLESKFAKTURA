@@ -320,13 +320,14 @@ fun InvoiceItemRow(
 fun InvoiceDetailDialog(
     invoice: Invoice,
     onDismiss: () -> Unit,
-    onSave: (Invoice) -> Unit
+    onSave: (Invoice) -> Unit,
+    isSaving: Boolean = false
 ) {
     var supplierName by remember { mutableStateOf(invoice.supplierName) }
     var ico by remember { mutableStateOf(invoice.ico ?: "") }
     var dic by remember { mutableStateOf(invoice.dic ?: "") }
     var totalAmountStr by remember { mutableStateOf(SlovakFinanceUtils.formatCentsForInput(invoice.effectiveTotalCents())) }
-    var vatRateStr by remember { mutableStateOf((invoice.vatRate ?: 20.0).toString().replace('.', ',')) }
+    var vatRateStr by remember { mutableStateOf(SlovakFinanceUtils.formatOptionalVatRateForInput(invoice.vatRate)) }
     var vatAmountStr by remember {
         mutableStateOf(invoice.effectiveVatCents()?.let { SlovakFinanceUtils.formatCentsForInput(it) } ?: "")
     }
@@ -360,7 +361,7 @@ fun InvoiceDetailDialog(
         unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
     )
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = { if (!isSaving) onDismiss() }) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -388,7 +389,7 @@ fun InvoiceDetailDialog(
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        IconButton(onClick = onDismiss) {
+                        IconButton(onClick = onDismiss, enabled = !isSaving) {
                             Icon(Icons.Default.Close, contentDescription = "Zavrieť", tint = MaterialTheme.colorScheme.onSurface)
                         }
                     }
@@ -617,6 +618,7 @@ fun InvoiceDetailDialog(
                     ) {
                         OutlinedButton(
                             onClick = onDismiss,
+                            enabled = !isSaving,
                             modifier = Modifier.weight(1f).height(48.dp).testTag("cancel_edit_button"),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
                             shape = RoundedCornerShape(12.dp),
@@ -640,7 +642,7 @@ fun InvoiceDetailDialog(
                                 val totalCents = SlovakFinanceUtils.bigDecimalToCents(parsedAmount)
 
                                 val parsedRate = SlovakFinanceUtils.parseSlovakDecimal(vatRateStr)
-                                if (parsedRate == null || parsedRate < BigDecimal.ZERO || parsedRate > BigDecimal(100)) {
+                                if (!SlovakFinanceUtils.isValidOptionalVatRate(vatRateStr)) {
                                     validationError = "Sadzba DPH musí byť v rozsahu 0 až 100 %."
                                     return@Button
                                 }
@@ -683,7 +685,7 @@ fun InvoiceDetailDialog(
                                         dic = dic.trim().ifBlank { null },
                                         totalAmount = SlovakFinanceUtils.centsToDouble(totalCents),
                                         totalAmountCents = totalCents,
-                                        vatRate = parsedRate.toDouble(),
+                                        vatRate = parsedRate?.toDouble(),
                                         vatAmount = vatCents?.let { SlovakFinanceUtils.centsToDouble(it) },
                                         vatAmountCents = vatCents,
                                         issueDate = normIssue,
@@ -694,6 +696,7 @@ fun InvoiceDetailDialog(
                                     )
                                 )
                             },
+                            enabled = !isSaving,
                             modifier = Modifier.weight(1f).height(48.dp).testTag("save_edit_button"),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
@@ -701,7 +704,7 @@ fun InvoiceDetailDialog(
                             ),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Uložiť", fontWeight = FontWeight.Bold)
+                            Text(if (isSaving) "Ukladám..." else "Uložiť", fontWeight = FontWeight.Bold)
                         }
                     }
                 }

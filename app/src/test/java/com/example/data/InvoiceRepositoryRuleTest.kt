@@ -87,6 +87,40 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
     }
 
     @Test
+    fun failedCloudWrite_doesNotCreateALocalOnlyRow_andCanBeRetriedWithSameId() = runBlocking {
+        val uid = signInTestUser("offline_${UUID.randomUUID()}@test.sk")
+        val repo = InvoiceRepository(context, firestore, auth)
+        try {
+            withTimeout(DEFAULT_TIMEOUT_MS) { repo.initializeUserStats(uid) }
+            repo.stopCloudSync()
+            val invoice = Invoice(
+                id = UUID.randomUUID().toString(),
+                supplierName = "Offline test",
+                issueDate = "2026-11-16",
+                totalAmount = 12.30,
+                totalAmountCents = 1230L,
+                category = "Iné",
+                userId = uid
+            )
+            firestore.disableNetwork().await()
+            val failed = withTimeout(20_000L) { repo.insertInvoice(invoice) }
+            assertTrue("Cloud write unexpectedly succeeded offline", failed.isFailure)
+            assertTrue(repo.getInvoices().first().none { it.id == invoice.id })
+            firestore.enableNetwork().await()
+            val retried = withTimeout(DEFAULT_TIMEOUT_MS) { repo.insertInvoice(invoice) }
+            assertTrue("Retry failed: ${retried.exceptionOrNull()}", retried.isSuccess)
+            assertEquals(1, repo.getInvoices().first().count { it.id == invoice.id })
+            assertTrue(firestore.collection("users").document(uid).collection("invoices").document(invoice.id).get().await().exists())
+            val foreignOwner = invoice.copy(id = UUID.randomUUID().toString(), userId = "different-owner")
+            assertTrue(repo.insertInvoice(foreignOwner).isFailure)
+            assertTrue(repo.getInvoices().first().none { it.id == foreignOwner.id })
+        } finally {
+            firestore.enableNetwork().await()
+            repo.stopCloudSync()
+        }
+    }
+
+    @Test
     fun reserveAndRollbackCredit_atomicReservation_restoresCreditOnce() = runBlocking {
         val uid = signInTestUser("credit_${UUID.randomUUID()}@test.sk")
         val repo = InvoiceRepository(context, firestore, auth)

@@ -73,6 +73,20 @@ class PdfExporterTest {
     }
 
     @Test
+    fun prepareReport_distinguishesUnknownVatFromConfirmedZero() {
+        val unknown = sampleInvoices[0].copy(vatAmount = null, vatAmountCents = null, vatRate = null)
+        val zero = sampleInvoices[1].copy(vatAmount = 0.0, vatAmountCents = 0L, vatRate = 0.0)
+        val (unknownSummary, unknownRows) = PdfExporter.prepareReport(listOf(unknown), "11/2026")
+        assertEquals(1, unknownSummary.invoiceCountWithoutVat)
+        assertEquals("-", unknownSummary.formattedTotalVat)
+        assertEquals("-", unknownRows.single().vatText)
+        val (mixedSummary, mixedRows) = PdfExporter.prepareReport(listOf(unknown, zero), "11/2026")
+        assertEquals(1, mixedSummary.invoiceCountWithoutVat)
+        assertEquals("0,00 €", mixedSummary.formattedTotalVat)
+        assertEquals("0,00 €", mixedRows[1].vatText)
+    }
+
+    @Test
     fun generatePdfFile_cleansOldExportsAndWritesPdfFile(): Unit = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val staleFile = File(context.cacheDir, "Prehlad_dokladov_1000.pdf").apply {

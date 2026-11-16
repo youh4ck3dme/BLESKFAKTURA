@@ -429,8 +429,16 @@ class InvoiceRepository(
     }
 
     suspend fun insertInvoice(invoice: Invoice): Result<Unit> = withContext(Dispatchers.IO) {
-        val uid = _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid
+        val uid = _currentUser.value?.uid
             ?: return@withContext Result.failure(IllegalStateException("Používateľ nie je prihlásený."))
+        if (invoice.userId.isNotBlank() && invoice.userId != uid) {
+            return@withContext Result.failure(IllegalStateException("Účet sa zmenil. Doklad nebol uložený do iného profilu."))
+        }
+        val isCloudUser = !uid.startsWith("demo_")
+        val db = if (isCloudUser) firestoreDb else null
+        if (isCloudUser && (db == null || firebaseAuth?.currentUser?.uid != uid)) {
+            return@withContext Result.failure(IllegalStateException("Pred uložením sa znova prihláste do správneho účtu Google."))
+        }
 
         val cents = invoice.effectiveTotalCents()
         val vatCents = invoice.effectiveVatCents()
@@ -451,11 +459,8 @@ class InvoiceRepository(
             category = invoice.category.takeIf { it in ALLOWED_CATEGORIES } ?: "Iné"
         )
 
-        // Save locally immediately (preserves local imageUrl path)
-        invoiceDao.insertInvoice(normalizedInvoice.toEntity())
-
-        val db = firestoreDb
-        val isCloudUser = isFirebaseReady && !uid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == uid
+        // A cloud profile has no offline outbox. Confirm the server write before
+        // making this version durable locally; the form can retry with the same id.
         if (isCloudUser && db != null) {
             val docRef = db.collection("users").document(uid).collection("invoices").document(normalizedInvoice.id)
             try {
@@ -477,29 +482,40 @@ class InvoiceRepository(
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
 
-                db.runTransaction { tx ->
-                    val existingSnap = tx.get(docRef)
-                    if (!existingSnap.exists()) {
-                        val createPayload = HashMap(baseFields).apply {
-                            put("userId", uid)
-                            put("createdAt", FieldValue.serverTimestamp())
-                        }.filterValues { it != null }
-                        tx.set(docRef, createPayload)
-                    } else {
-                        tx.update(docRef, baseFields)
-                    }
-                }.await()
+                withTimeout(15_000L) {
+                    db.runTransaction { tx ->
+                        val existingSnap = tx.get(docRef)
+                        if (!existingSnap.exists()) {
+                            val createPayload = HashMap(baseFields).apply {
+                                put("userId", uid)
+                                put("createdAt", FieldValue.serverTimestamp())
+                            }.filterValues { it != null }
+                            tx.set(docRef, createPayload)
+                        } else {
+                            tx.update(docRef, baseFields)
+                        }
+                    }.await()
+                }
+            } catch (e: TimeoutCancellationException) {
+                val error = IllegalStateException("Uloženie do cloudu sa nepotvrdilo. Skontrolujte pripojenie a zopakujte uloženie.", e)
+                _syncError.value = error.message
+                return@withContext Result.failure(error)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 handleFirestoreError(e, OperationType.WRITE, docRef.path, firebaseAuth)
-                _syncError.value = "Doklad uložený lokálne, ale cloudová synchronizácia zlyhala."
-                recalculateStats(uid, updateFirestore = false)
-                return@withContext Result.failure(e)
+                val error = IllegalStateException("Doklad sa nepodarilo uložiť do cloudu. Skontrolujte pripojenie a skúste uloženie znova.", e)
+                _syncError.value = error.message
+                return@withContext Result.failure(error)
             }
         }
 
-        recalculateStats(uid, updateFirestore = true)
+        if (_currentUser.value?.uid != uid) {
+            return@withContext Result.failure(IllegalStateException("Účet sa počas ukladania zmenil. Doklad sa neuložil do iného lokálneho profilu."))
+        }
+        invoiceDao.insertInvoice(normalizedInvoice.toEntity())
+        _syncError.value = null
+        recalculateStats(uid, updateFirestore = isCloudUser)
         Result.success(Unit)
     }
 
@@ -753,14 +769,18 @@ class InvoiceRepository(
         if (isCloudUser && db != null) {
             val userRef = db.collection("users").document(userId)
             try {
-                userRef.update(
-                    mapOf(
-                        "totalInvoiced" to totalDouble,
-                        "totalInvoicedCents" to totalCents,
-                        "invoiceCount" to count,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                withTimeout(5_000L) {
+                    userRef.update(
+                        mapOf(
+                            "totalInvoiced" to totalDouble,
+                            "totalInvoicedCents" to totalCents,
+                            "invoiceCount" to count,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                }
+            } catch (_: TimeoutCancellationException) {
+                _syncError.value = "Doklad je uložený, ale obnovenie cloudového súhrnu sa nepotvrdilo."
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

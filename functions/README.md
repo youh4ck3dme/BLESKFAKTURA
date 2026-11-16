@@ -25,7 +25,7 @@ Tento priečinok obsahuje **Firebase Cloud Functions v2** pre budúce overovanie
    pnpm install --frozen-lockfile --registry=https://registry.npmjs.org/
    pnpm test
    cd ..
-   firebase deploy --only functions:verifyPlayPurchase,functions:handlePlayRtdn --project gen-lang-client-0115180408
+   pnpm --registry=https://registry.npmjs.org/ dlx --allow-build=protobufjs firebase-tools@15.36.0 deploy --only functions:verifyPlayPurchase,functions:handlePlayRtdn --project gen-lang-client-0115180408
    ```
 6. Android klient (`PlayBillingManager`) už volá callable `verifyPlayPurchase` v regióne `europe-west1` pri nákupe aj pri obnove nepotvrdených/nekonzumovaných nákupov z Google Play.
 
@@ -43,7 +43,7 @@ Toto je kapacitný limit, nie cenový strop. Nevzťahuje sa na priame AI volania
 Testy bežia proti zostavenému JavaScriptu, takže nevyžadujú experimentálne TypeScript stripovanie v Node.
 Používa sa úzky oficiálny klient `@googleapis/androidpublisher` namiesto načítania všetkých Google API.
 
-Aktuálne blokery a živé dôkazy sú v `docs/RELEASE_EXECUTION_STATUS.md`; lokálny úspech testov nedokazuje nasadenie ani uskutočnený testovací nákup.
+Aktuálne blokery a živé dôkazy sú v [deklaráciách a stave interného vydania](../docs/play-console-declarations.md); lokálny úspech testov nedokazuje nasadenie ani uskutočnený testovací nákup.
 
 ## Overenie bez cloudových zmien
 
@@ -88,7 +88,7 @@ gcloud pubsub topics add-iam-policy-binding play-billing-rtdn \
 # V checkout-e s balíčkom functions; Node.js 22 a pnpm musia byť dostupné.
 pnpm --dir functions install --frozen-lockfile --registry=https://registry.npmjs.org/
 pnpm --dir functions test
-pnpm --registry=https://registry.npmjs.org/ dlx firebase-tools@15.36.0 deploy \
+pnpm --registry=https://registry.npmjs.org/ dlx --allow-build=protobufjs firebase-tools@15.36.0 deploy \
   --only functions:verifyPlayPurchase,functions:handlePlayRtdn --project "$BF_PROJECT"
 gcloud functions describe verifyPlayPurchase --gen2 --region=europe-west1 \
   --project "$BF_PROJECT" --format='yaml(state,serviceConfig.serviceAccountEmail,serviceConfig.uri)'

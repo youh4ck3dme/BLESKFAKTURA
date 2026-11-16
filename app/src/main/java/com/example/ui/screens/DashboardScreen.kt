@@ -103,6 +103,7 @@ fun DashboardScreen(
     var selectedMonthIdx by rememberSaveable { mutableStateOf<Int?>(null) }
     var activeNavTab by rememberSaveable { mutableStateOf("HOME") }
     var selectedInvoiceForDetail by remember { mutableStateOf<Invoice?>(null) }
+    var isSavingInvoiceDetail by remember { mutableStateOf(false) }
     var isExportingPdf by remember { mutableStateOf(false) }
 
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
@@ -771,10 +772,23 @@ fun DashboardScreen(
     selectedInvoiceForDetail?.let { invoice ->
         InvoiceDetailDialog(
             invoice = invoice,
-            onDismiss = { selectedInvoiceForDetail = null },
+            onDismiss = { if (!isSavingInvoiceDetail) selectedInvoiceForDetail = null },
+            isSaving = isSavingInvoiceDetail,
             onSave = { updated ->
-                viewModel.saveInvoice(updated)
-                selectedInvoiceForDetail = null
+                if (!isSavingInvoiceDetail) {
+                    isSavingInvoiceDetail = true
+                    viewModel.saveInvoice(
+                        updated,
+                        onSaved = {
+                            isSavingInvoiceDetail = false
+                            selectedInvoiceForDetail = null
+                        },
+                        onError = { message ->
+                            isSavingInvoiceDetail = false
+                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        }
+                    )
+                }
             }
         )
     }

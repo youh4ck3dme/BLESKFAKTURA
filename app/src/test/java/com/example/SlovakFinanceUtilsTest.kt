@@ -3,6 +3,8 @@ package com.example
 import com.example.data.SlovakFinanceUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import java.math.BigDecimal
 
@@ -37,6 +39,19 @@ class SlovakFinanceUtilsTest {
         assertNull(SlovakFinanceUtils.normalizeIsoDate("1800-01-01"))
         assertNull(SlovakFinanceUtils.normalizeIsoDate("16.11.2026-extra"))
         assertNull(SlovakFinanceUtils.normalizeIsoDate("2026-11-16 12:00"))
+    }
+
+    @Test
+    fun optionalVatRate_preservesUnknownValueAndValidatesOnlyEnteredRates() {
+        assertEquals("", SlovakFinanceUtils.formatOptionalVatRateForInput(null))
+        assertEquals("0", SlovakFinanceUtils.formatOptionalVatRateForInput(0.0))
+        assertEquals("23", SlovakFinanceUtils.formatOptionalVatRateForInput(23.0))
+        assertTrue(SlovakFinanceUtils.isValidOptionalVatRate(""))
+        assertTrue(SlovakFinanceUtils.isValidOptionalVatRate("0"))
+        assertTrue(SlovakFinanceUtils.isValidOptionalVatRate("23"))
+        assertFalse(SlovakFinanceUtils.isValidOptionalVatRate("-1"))
+        assertFalse(SlovakFinanceUtils.isValidOptionalVatRate("101"))
+        assertFalse(SlovakFinanceUtils.isValidOptionalVatRate("neznáme"))
     }
 
     @Test

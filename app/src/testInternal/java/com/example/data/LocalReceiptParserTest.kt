@@ -64,6 +64,14 @@ class LocalReceiptParserTest {
     }
 
     @Test
+    fun negativeTotal_isNeverConvertedToAPositiveExpense() {
+        for (signed in listOf("-12,30", "−12,30", "- 12,30", "–12,30")) {
+            val result = LocalReceiptParser.parse("Obchod s.r.o.\nDOKLAD\nCelkom $signed\n16.11.2026")
+            assertTrue("Negative total was accepted: $signed -> $result", result is AiExtractionResult.InvalidDocument)
+        }
+    }
+
+    @Test
     fun unrelatedOrEmptyText_isRejected() {
         assertTrue(LocalReceiptParser.parse("") is AiExtractionResult.InvalidDocument)
         assertTrue(LocalReceiptParser.parse("Letný výlet\nNádherná krajina") is AiExtractionResult.InvalidDocument)

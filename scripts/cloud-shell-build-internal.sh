@@ -27,6 +27,17 @@ if not (root/'jdk21/bin/java').exists():
         top=bundle.getmembers()[0].name.split('/')[0]
         bundle.extractall(root,filter='data')
     (root/top).rename(root/'jdk21');archive.unlink()
+if not (root/'node22/bin/node').exists():
+    with urllib.request.urlopen('https://nodejs.org/dist/index.json',timeout=60) as response:releases=json.load(response)
+    version=next(v['version'] for v in releases if v['version'].startswith('v22.'))
+    filename=f'node-{version}-linux-x64.tar.xz';base=f'https://nodejs.org/dist/{version}/'
+    with urllib.request.urlopen(base+'SHASUMS256.txt',timeout=60) as response:sums=response.read().decode()
+    expected=next(line.split()[0] for line in sums.splitlines() if line.endswith(' '+filename))
+    archive=root/'node22.tar.xz';download(base+filename,archive)
+    if digest(archive,'sha256')!=expected:raise RuntimeError('Node checksum mismatch')
+    with tarfile.open(archive) as bundle:
+        top=bundle.getmembers()[0].name.split('/')[0];bundle.extractall(root,filter='data')
+    (root/top).rename(root/'node22');archive.unlink()
 sdk=root/'android-sdk'
 if not (sdk/'cmdline-tools/latest/bin/sdkmanager').exists():
     base='https://dl.google.com/android/repository/'
@@ -40,11 +51,11 @@ if not (sdk/'cmdline-tools/latest/bin/sdkmanager').exists():
     with zipfile.ZipFile(local) as bundle:bundle.extractall(sdk/'cmdline-tools')
     (sdk/'cmdline-tools/cmdline-tools').rename(sdk/'cmdline-tools/latest');local.unlink()
     for path in (sdk/'cmdline-tools/latest/bin').iterdir():path.chmod(path.stat().st_mode|0o111)
-print('JDK21 and official Android command-line tools verified.')
+print('JDK21, Node22 and official Android command-line tools verified.')
 PY
 export JAVA_HOME="$BLESK_TOOLS_DIR/jdk21"
 export ANDROID_HOME="$BLESK_TOOLS_DIR/android-sdk"
-export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+export PATH="$JAVA_HOME/bin:$BLESK_TOOLS_DIR/node22/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
 echo 'Nasledujú licencie Android SDK. Prečítajte ich a potvrďte sami.'
 sdkmanager --sdk_root="$ANDROID_HOME" --licenses
 sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-36.1' 'build-tools;36.0.0' 'platform-tools'
