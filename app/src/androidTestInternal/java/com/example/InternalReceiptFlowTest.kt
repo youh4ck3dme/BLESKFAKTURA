@@ -50,7 +50,8 @@ class InternalReceiptFlowTest {
         repository.initializeUserStats(uid)
         val id = "instrumented-${UUID.randomUUID()}"
         val image = ReceiptImageProcessor.archiveReceiptBitmap(context, bitmap, id)
-        assertTrue(image != null && File(image).exists())
+        val imageFile = File(requireNotNull(image) { "Receipt image was not archived" })
+        assertTrue(imageFile.exists())
         val invoice = Invoice(
             id = id,
             supplierName = data.supplierName,
@@ -58,7 +59,7 @@ class InternalReceiptFlowTest {
             totalAmount = data.totalAmount,
             totalAmountCents = 12345,
             category = "Iné",
-            imageUrl = image,
+            imageUrl = imageFile.absolutePath,
             userId = uid
         )
         assertTrue(repository.insertInvoice(invoice).isSuccess)
@@ -77,7 +78,7 @@ class InternalReceiptFlowTest {
         repository.signOutAndClearLocalCache()
         assertNull(repository.currentUser.value)
         // Signing out a local profile must not destroy the only copy of a receipt.
-        assertTrue(File(image!!).exists())
+        assertTrue(imageFile.exists())
         assertFalse(pdfFile.exists())
         repository.signInDemoUser()
         repository.initializeUserStats(uid)
@@ -86,7 +87,7 @@ class InternalReceiptFlowTest {
         assertNull(repository.currentUser.value)
         assertTrue(AppDatabase.getDatabase(context).invoiceDao().getInvoicesForUserOnce(uid).isEmpty())
         assertNull(AppDatabase.getDatabase(context).userStatsDao().getUserStats(uid))
-        assertFalse(File(image).exists())
+        assertFalse(imageFile.exists())
         bitmap.recycle()
     }
 

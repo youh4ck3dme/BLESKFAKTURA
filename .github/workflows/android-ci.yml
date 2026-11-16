@@ -31,13 +31,23 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          cmdline-tools-version: '16111833'
+          log-accepted-android-sdk-licenses: false
       - name: Install Android build SDK
         run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
       - name: Prepare Firebase config for compilation
         run: node scripts/prepare-ci-config.mjs
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Unit tests, lint and internal debug APK
-        run: ./gradlew :app:testInternalDebugUnitTest :app:lintInternalDebug :app:lintInternalRelease :app:assembleInternalDebug --no-daemon --console=plain
+        run: bash scripts/test-internal.sh :app:testInternalDebugUnitTest :app:lintInternalDebug :app:lintInternalRelease :app:assembleInternalDebug :app:bundleInternalRelease -PunsignedRelease=true
       - name: Build upload-signed internal AAB
         if: ${{ env.GOOGLE_SERVICES_JSON != '' && env.UPLOAD_KEYSTORE_BASE64 != '' }}
         env:
@@ -75,6 +85,10 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          cmdline-tools-version: '16111833'
+          log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
       - run: node scripts/prepare-ci-config.mjs

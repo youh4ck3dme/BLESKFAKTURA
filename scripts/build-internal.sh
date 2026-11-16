@@ -12,7 +12,7 @@ if [[ "$java_major" != 21 ]]; then
   echo 'Použite JDK 21 (API 36 Robolectric testy ho vyžadujú).' >&2
   exit 1
 fi
-./gradlew :app:testInternalDebugUnitTest :app:lintInternalDebug :app:lintInternalRelease :app:assembleInternalDebug --no-daemon --console=plain "$@"
+bash scripts/test-internal.sh :app:testInternalDebugUnitTest :app:lintInternalDebug :app:lintInternalRelease :app:assembleInternalDebug "$@"
 if [[ -n "${KEYSTORE_PATH:-}" && -n "${STORE_PASSWORD:-}" && -n "${KEY_PASSWORD:-}" ]]; then
   ./gradlew :app:bundleInternalRelease --no-daemon --console=plain "$@"
 else
