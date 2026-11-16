@@ -3,14 +3,18 @@ package sk.bizagent.efaktura
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.io.InputStream
+import java.io.IOException
 
 class EfakturaSessionTest {
     @Test fun presentationSeparatesTechnicalSlovakAndDelivery() {
@@ -37,8 +41,9 @@ class EfakturaSessionTest {
         )
         assertEquals(LOCAL_TEST_BANNER, shown.banner)
         assertEquals(true, shown.technicalPass)
-        assertFalse(shown.technicalText.contains("legislatívne platná faktúra.") && shown.technicalText.startsWith("Legislatívne"))
-        assertTrue(shown.technicalText.contains("Nie je to legislatívne platná faktúra."))
+        assertTrue(shown.technicalText.contains(LEGISLATIVE_NOT_CHECKED))
+        assertFalse(shown.technicalText.contains("právne neplatn"))
+        assertFalse(shown.technicalText.contains("legislatívne platná faktúra"))
         assertTrue(shown.slovakText.contains("neboli spustené"))
         assertEquals(listOf("SK_RULESET_NOT_EXECUTED: Slovenský ruleset nebol spustený."), shown.slovakIssues)
         assertTrue(shown.deliveryText.contains("PROVIDER_ACCEPTED"))
@@ -63,11 +68,11 @@ class EfakturaSessionTest {
         val client = MemoryClient()
         val session = EfakturaSession(CoroutineScope(Dispatchers.Unconfined)) { _, _ -> client }
         session.onAccountChanged(null, null)
-        assertNull(session.import("a".byteInputStream()))
+        assertNull(session.importPrepared("a".toByteArray()))
         session.onAccountChanged("uid", "tenant")
-        val first = session.import("alpha".byteInputStream())
+        val first = session.importPrepared("alpha".toByteArray())
         session.join()
-        val second = session.import("beta".byteInputStream())
+        val second = session.importPrepared("beta".toByteArray())
         session.join()
         session.retry(first!!)
         session.join()
@@ -76,6 +81,51 @@ class EfakturaSessionTest {
         assertEquals(listOf("alpha", "beta", "alpha"), client.payloads)
         val ready = session.state as EfakturaSession.State.Ready
         assertEquals(LOCAL_TEST_BANNER, ready.opened?.banner)
+        assertEquals(listOf("alpha", "beta", "alpha"), client.payloads)
+    }
+
+    @Test fun cappedReadStopsDuringTheReadAndCancelClosesTheStream() = runBlocking {
+        val endless = CountingStream()
+        try {
+            readCappedXml(endless, limit = 2_500)
+            fail("limit mal zastaviť čítanie")
+        } catch (error: XmlReadException) {
+            assertTrue(error.message!!.contains("2 500") || error.message!!.contains("2500"))
+        }
+        assertTrue(endless.calls < 10)
+        val gate = GateStream()
+        val job = launch(Dispatchers.IO) { readCappedXml(gate) }
+        delay(50)
+        job.cancel()
+        job.join()
+        assertTrue(gate.closed)
+    }
+}
+
+private class CountingStream : InputStream() {
+    var calls = 0
+    override fun read(): Int = 0x3C
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        calls += 1
+        val n = minOf(len, 1_000)
+        java.util.Arrays.fill(b, off, off + n, 0x3C.toByte())
+        return n
+    }
+}
+
+private class GateStream : InputStream() {
+    @Volatile var closed = false
+    private val lock = Object()
+    override fun close() {
+        closed = true
+        synchronized(lock) { lock.notifyAll() }
+    }
+    override fun read(): Int = 0x3C
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        synchronized(lock) {
+            while (!closed) lock.wait(50)
+        }
+        throw IOException("closed")
     }
 }
 

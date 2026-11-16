@@ -7,14 +7,15 @@ import { LocalSandboxProvider, UnconfiguredProvider } from "../../../packages/pr
 import { createDocumentService } from "../../../packages/core/src/service.js";
 import { MemoryStore, type DocumentStore } from "../../../packages/core/src/memory.js";
 import { startServer } from "./server.js";
-import { assertBoot, loadEnvFile, readBootConfig } from "./env.js";
-import { applyLocalSeed } from "./seed.js";
+import { assertBoot, loadEnvFile, readBootConfig, type BootConfig } from "./env.js";
+import { applyLocalProvision, applyLocalSeed } from "./seed.js";
 
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 loadEnvFile(path.join(process.cwd(), ".env"));
 loadEnvFile(path.join(moduleRoot, ".env"));
-const config = readBootConfig(moduleRoot);
+let config: BootConfig;
 try {
+  config = readBootConfig(moduleRoot);
   assertBoot(config);
 } catch (error) {
   console.error(error instanceof Error ? error.message : "Konfigurácia bola odmietnutá.");
@@ -36,10 +37,14 @@ const store = await openStore(config.store, config.dataDir);
 if (config.seed) {
   try {
     applyLocalSeed(config.env, store);
+    applyLocalProvision(config.env, store, config.provision);
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Seed bol odmietnutý.");
     process.exit(1);
   }
+} else if (config.provision) {
+  console.error("Lokálny provisioning vyžaduje lokálny seed.");
+  process.exit(1);
 }
 
 const service = createDocumentService({

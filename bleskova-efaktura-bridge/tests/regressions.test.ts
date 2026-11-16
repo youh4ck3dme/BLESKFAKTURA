@@ -10,7 +10,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createApi } from "../apps/api/src/server.js";
 import { assertBoot, loadEnvFile, readBootConfig } from "../apps/api/src/env.js";
 import { signEmuToken } from "../apps/api/src/emu-token.js";
-import { applyLocalSeed } from "../apps/api/src/seed.js";
+import { applyLocalProvision, applyLocalSeed } from "../apps/api/src/seed.js";
 import type { DeliveryProvider, TenantProfile, ValidationIssue, ValidationReport } from "../packages/contracts/src/index.js";
 import { AppError } from "../packages/core/src/errors.js";
 import { sha256, type DocumentStore } from "../packages/core/src/memory.js";
@@ -323,6 +323,43 @@ test("bind host defaults to all interfaces and rejects junk", () => {
   assert.equal(readBootConfig(root, { EFAKTURA_HOST: "127.0.0.1", EFAKTURA_PORT: "0" }).host, "127.0.0.1");
   assert.equal(readBootConfig(root, { EFAKTURA_PORT: "0" }).port, 0);
   assert.throws(() => readBootConfig(root, { EFAKTURA_HOST: "http://evil" }), /EFAKTURA_HOST/);
+});
+
+test("explicit local provision does not trust the token and production refuses it", async () => {
+  assert.throws(() => readBootConfig(root, {
+    EFAKTURA_ENV: "production",
+    EFAKTURA_AUTH_MODE: "disabled",
+    EFAKTURA_PROVIDER: "unconfigured",
+    EFAKTURA_LOCAL_SEED: "0",
+    EFAKTURA_STORE: "sqlite",
+    EFAKTURA_LOCAL_PROVISION_UID: "android-uid",
+    EFAKTURA_LOCAL_PROVISION_TENANT: "tenant-buyer",
+    EFAKTURA_LOCAL_PROVISION_ROLE: "owner",
+  }), /provisioning/);
+  assert.throws(() => readBootConfig(root, {
+    EFAKTURA_ENV: "local",
+    EFAKTURA_LOCAL_PROVISION_UID: "*",
+    EFAKTURA_LOCAL_PROVISION_TENANT: "tenant-buyer",
+    EFAKTURA_LOCAL_PROVISION_ROLE: "owner",
+  }), /UID/);
+  const parsed = readBootConfig(root, {
+    EFAKTURA_ENV: "local",
+    EFAKTURA_LOCAL_SEED: "1",
+    EFAKTURA_LOCAL_PROVISION_UID: "android-uid",
+    EFAKTURA_LOCAL_PROVISION_TENANT: "tenant-buyer",
+    EFAKTURA_LOCAL_PROVISION_ROLE: "owner",
+  });
+  assert.equal(parsed.provision?.uid, "android-uid");
+  const service = api();
+  applyLocalProvision("local", service.store, parsed.provision);
+  const handler = createApi({ service, env: "local", authMode: "emulator", emulatorSecret: secret, rateLimitPerMinute: 50 });
+  const stranger = await invoke(handler, "GET", `/v1/tenants/${buyer.id}/documents`, tokenHeaders("android-other", buyer.id));
+  assert.equal(stranger.status, 403);
+  const member = await invoke(handler, "GET", `/v1/tenants/${buyer.id}/documents`, tokenHeaders("android-uid", buyer.id));
+  assert.equal(member.status, 200);
+  assert.equal(service.store.getMember("android-other", buyer.id), undefined);
+  assert.throws(() => applyLocalProvision("production", service.store, parsed.provision), /produkcii/);
+  service.store.close();
 });
 
 test("loadEnvFile does not override existing variables", () => {

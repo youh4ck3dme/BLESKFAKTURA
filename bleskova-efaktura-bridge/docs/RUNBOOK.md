@@ -44,7 +44,18 @@ Sandbox issue/send/delivery prešiel aj z Kotlin klienta (`BridgeLiveTest`). `pr
 
 Kotlin testy: `cd android/efaktura-client && ./gradlew test`. Wrapper 9.3.1. Starý 8.10.2 tu končil exit 1 ešte pred assertmi, lebo cudzí HTTP klient zhodil worker. Podrobnosti: `reports/gradle-worker-diagnosis.md`.
 
-CI workflow: `.github/workflows/efaktura-bridge.yml` (Node 22, JDK 17, `npm ci`, typecheck, `npm test`, `npm audit --audit-level=high`, `./gradlew test`, Docker smoke). Vzdialený beh GitHub Actions je v tomto kole **NOT_RUN**, kým ho nespustí push a neskončí. Lokálny Docker daemon v tomto prostredí nie je.
+Seed je len lokálny a syntetický. UID z aplikácie, ktoré nie je `uid-buyer`, `uid-supplier` ani `uid-reader`, ostane 403, kým ho explicitne nezaradíš. Produkcia to odmietne:
+
+```bash
+# len EFAKTURA_ENV=local a EFAKTURA_LOCAL_SEED=1
+EFAKTURA_LOCAL_PROVISION_UID=<uid z Androidu>
+EFAKTURA_LOCAL_PROVISION_TENANT=tenant-buyer
+EFAKTURA_LOCAL_PROVISION_ROLE=owner
+```
+
+Rola v tokenoch sa nečíta. Provisioning nesmie ísť na iný tenant ako `tenant-buyer` alebo `tenant-supplier`.
+
+CI workflow: `.github/workflows/efaktura-bridge.yml` (Node 22, JDK 17, `npm ci`, typecheck, `npm test`, `npm audit --audit-level=high`, `./gradlew test`, Docker smoke) a `.github/workflows/efaktura-android.yml` (SDK 36 / 36.1, Build Tools 36.0.0, Gradle 9.3.1, aplikovanie patchu len v jobe, `assembleDebug`, unit testy `ExampleUnitTest`, `ExampleRobolectricTest`, `InvoiceAiValidationTest`, `lintDebug`, kontrola že release manifest nemá cleartext). Výsledok vzdialeného behu je v `docs/RELEASE_READINESS.md`, nie v tomto návode. Lokálny Docker daemon v tomto prostredí nie je.
 
 Mutácie potrebujú `Authorization`, `X-Firebase-AppCheck` a `X-Tenant-Id`. Cesta `/v1/tenants/{id}` musí sedieť s hlavičkou. Ani hlavička, ani cesta nie sú členstvo.
 

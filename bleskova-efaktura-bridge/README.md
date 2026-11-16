@@ -45,7 +45,7 @@ curl -sS -H "Authorization: $AUTH" -H "X-Firebase-AppCheck: $APP" \
   "http://127.0.0.1:8088/v1/tenants/tenant-buyer/documents/import?direction=INBOUND"
 ```
 
-Seed je len lokálny a syntetický (identity z Peppol príkladu, uid `uid-buyer` / `uid-supplier`). `EFAKTURA_ENV=production` emulátor, sandbox aj tento seed odmietne a proces skončí. Overené 2026-11-16: health `environment=local`, import `Snippet1`, `technicalPass=true`, `productionEligible=false`.
+Seed je len lokálny a syntetický (identity z Peppol príkladu, uid `uid-buyer` / `uid-supplier` / `uid-reader`). Aktuálne UID z Androidu sa zaradí len explicitne cez `EFAKTURA_LOCAL_PROVISION_UID`, `EFAKTURA_LOCAL_PROVISION_TENANT` a `EFAKTURA_LOCAL_PROVISION_ROLE`, a len do `tenant-buyer` alebo `tenant-supplier`. Token členstvo nevytvorí. `EFAKTURA_ENV=production` emulátor, sandbox, seed aj tento provisioning odmietne a proces skončí.
 
 Kotlin, vrátane volania reálneho API:
 
@@ -56,7 +56,7 @@ cd android/efaktura-client
 
 Wrapper je Gradle **9.3.1** (nie 8.10.2). 8.10.2 zabíjal test worker, keď na jeho socket prišlo HTTP `GET` (prvý bajt `G` = type tag 71) a worker potom hlásil connection refused. Oprava je [gradle/gradle#35175](https://github.com/gradle/gradle/issues/27801) v 9.3. Testy sa nespúšťajú ako úspech len preto, že existuje JUnit XML.
 
-Android SDK tu nie je, knižnica je JVM modul. Integračný patch je v `integration/android-app.patch` a **nie je aplikovaný**. Návod: `integration/APPLY.md`.
+Android SDK v tomto prostredí nie je, knižnica je JVM modul. Integračný patch je v `integration/android-app.patch` a **nie je aplikovaný**. Návod: `integration/APPLY.md`. Android CI je `.github/workflows/efaktura-android.yml`: patch sa aplikuje len v jobe, potom `assembleDebug`, vybrané unit testy a `lintDebug`. `git apply --check` to nenahrádza.
 
 ## Podporované / nepodporované
 

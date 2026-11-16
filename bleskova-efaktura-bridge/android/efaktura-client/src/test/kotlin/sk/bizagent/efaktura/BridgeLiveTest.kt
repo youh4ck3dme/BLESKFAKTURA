@@ -62,7 +62,7 @@ class BridgeLiveTest {
             assertEquals(false, document.validation?.productionEligible)
             val presented = presentDocument(document)
             assertEquals(LOCAL_TEST_BANNER, presented.banner)
-            assertTrue(presented.technicalText.contains("Nie je to legislatívne platná faktúra."))
+            assertTrue(presented.technicalText.contains(LEGISLATIVE_NOT_CHECKED))
             assertEquals(ValidationStatus.UNSUPPORTED, document.validation?.layers?.firstOrNull { it.layer == "SK" }?.status)
             val loaded = buyer.getDocument(document.id)
             assertEquals(document.sha256, loaded.sha256)

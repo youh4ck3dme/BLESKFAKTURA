@@ -6,6 +6,7 @@ import kotlinx.coroutines.launch
 import sk.bizagent.efaktura.Direction
 import sk.bizagent.efaktura.EfakturaClient
 import sk.bizagent.efaktura.EfakturaException
+import sk.bizagent.efaktura.readCappedXmlBlocking
 import java.io.InputStream
 import java.util.UUID
 
@@ -46,7 +47,7 @@ class EfakturaImportViewModel(
     fun import(xml: InputStream): String? {
         val uid = ownerUid ?: return null
         val tenantId = ownerTenant ?: return null
-        val operation = Operation(key = "import-${UUID.randomUUID()}", bytes = xml.readBytes(), uid = uid, tenantId = tenantId)
+        val operation = Operation(key = "import-${UUID.randomUUID()}", bytes = readCappedXmlBlocking(xml), uid = uid, tenantId = tenantId)
         operations[operation.key] = operation
         launch(operation)
         return operation.key

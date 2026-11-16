@@ -1,12 +1,66 @@
 package sk.bizagent.efaktura
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.io.InputStream
 import java.util.UUID
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
 
 const val LOCAL_TEST_BANNER = "Lokálny testovací režim — nejde o produkčné doručenie."
+const val LEGISLATIVE_NOT_CHECKED = "Legislatívna platnosť nebola overená."
+const val XML_READ_LIMIT = 1_500_000
+
+class XmlReadException(message: String) : Exception(message)
+
+fun readCappedXmlBlocking(input: InputStream, limit: Int = XML_READ_LIMIT, active: () -> Unit = {}): ByteArray {
+    input.use { stream ->
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        var total = 0L
+        while (true) {
+            active()
+            val read = stream.read(buffer)
+            if (read < 0) break
+            if (total + read > limit) throw XmlReadException("XML prekračuje limit $limit bajtov.")
+            total += read
+            out.write(buffer, 0, read)
+        }
+        return out.toByteArray()
+    }
+}
+
+suspend fun readCappedXml(input: InputStream, limit: Int = XML_READ_LIMIT): ByteArray {
+    return withContext(Dispatchers.IO) {
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { runCatching { input.close() } }
+            val outcome = runCatching { readCappedXmlBlocking(input, limit) { ensureActive() } }
+            outcome.fold(
+                onSuccess = { bytes -> continuation.resume(bytes) { _, _, _ -> } },
+                onFailure = { error ->
+                    when {
+                        error is kotlinx.coroutines.CancellationException -> {
+                            if (continuation.isActive) continuation.cancel(error)
+                        }
+                        !continuation.isActive -> Unit
+                        error is XmlReadException -> continuation.resumeWithException(error)
+                        error is IOException -> continuation.resumeWithException(
+                            XmlReadException(error.message ?: "XML sa nepodarilo prečítať.")
+                        )
+                        else -> continuation.resumeWithException(error)
+                    }
+                }
+            )
+        }
+    }
+}
 
 data class PresentedDocument(
     val id: String,
@@ -24,9 +78,9 @@ data class PresentedDocument(
 fun presentDocument(document: DocumentDto): PresentedDocument {
     val report = document.validation
     val technicalText = when (report?.technicalPass) {
-        true -> "Technická kontrola prešla (XML, XSD, EN 16931, Peppol). Nie je to legislatívne platná faktúra."
-        false -> "Technická kontrola neprešla. Nie je to legislatívne platná faktúra."
-        null -> "Technická kontrola ešte nebežala. Nie je to legislatívne platná faktúra."
+        true -> "Technická kontrola prešla (XML, XSD, EN 16931, Peppol). $LEGISLATIVE_NOT_CHECKED"
+        false -> "Technická kontrola neprešla. $LEGISLATIVE_NOT_CHECKED"
+        null -> "Technická kontrola ešte nebežala. $LEGISLATIVE_NOT_CHECKED"
     }
     val slovakLayer = report?.layers?.firstOrNull { it.layer == "SK" }
     val slovakIssues = report?.issues?.filter { it.layer == "SK" }.orEmpty().map { "${it.ruleId}: ${it.message}" }
@@ -95,10 +149,14 @@ class EfakturaSession(
         setState(State.Idle)
     }
 
-    fun import(xml: InputStream): String? {
+    fun importPrepared(bytes: ByteArray): String? {
         val uid = ownerUid ?: return null
         val tenantId = ownerTenant ?: return null
-        val operation = Operation("import-${UUID.randomUUID()}", xml.readBytes(), uid, tenantId)
+        if (bytes.size > XML_READ_LIMIT) {
+            showError("XML prekračuje limit $XML_READ_LIMIT bajtov.")
+            return null
+        }
+        val operation = Operation("import-${UUID.randomUUID()}", bytes.copyOf(), uid, tenantId)
         operations[operation.key] = operation
         launch(operation.key) { client ->
             val result = client.importXml(Direction.INBOUND, operation.bytes.inputStream(), operation.key)
@@ -107,6 +165,11 @@ class EfakturaSession(
             setState(State.Ready(items, document?.let(::presentDocument), null))
         }
         return operation.key
+    }
+
+    fun showError(message: String) {
+        val ready = state as? State.Ready
+        setState(State.Ready(ready?.items ?: emptyList(), ready?.opened, message))
     }
 
     fun retry(operationKey: String) {

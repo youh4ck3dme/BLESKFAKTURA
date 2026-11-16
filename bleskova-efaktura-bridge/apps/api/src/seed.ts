@@ -28,3 +28,21 @@ export function applyLocalSeed(env: "local" | "production", store: DocumentStore
   store.putMember("uid-buyer", LOCAL_BUYER.id, ["owner"]);
   store.putMember("uid-reader", LOCAL_BUYER.id, ["reader"]);
 }
+
+const SYNTHETIC_TENANTS = new Set([LOCAL_SUPPLIER.id, LOCAL_BUYER.id]);
+
+export interface LocalProvision {
+  uid: string;
+  tenantId: string;
+  role: "owner" | "reader";
+}
+
+/** Explicit local membership. Never inferred from a client token. */
+export function applyLocalProvision(env: "local" | "production", store: DocumentStore, provision: LocalProvision | null): void {
+  if (!provision) return;
+  if (env !== "local") throw new Error("Lokálny provisioning je v produkcii zakázaný.");
+  if (!SYNTHETIC_TENANTS.has(provision.tenantId) || !store.getTenant(provision.tenantId)) {
+    throw new Error("Lokálny provisioning smie len existujúci syntetický tenant.");
+  }
+  store.putMember(provision.uid, provision.tenantId, [provision.role]);
+}

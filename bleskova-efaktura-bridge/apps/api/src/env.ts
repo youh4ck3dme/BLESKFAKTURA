@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import type { LocalProvision } from "./seed.js";
 
 export interface BootConfig {
   env: "local" | "production";
@@ -15,6 +16,7 @@ export interface BootConfig {
   validatorCache: string;
   validatorTimeoutMs: number;
   workerMs: number;
+  provision: LocalProvision | null;
 }
 
 export function loadEnvFile(file: string): void {
@@ -55,6 +57,7 @@ export function readBootConfig(moduleRoot: string, source: NodeJS.ProcessEnv = p
     validatorCache: source.EFAKTURA_VALIDATOR_CACHE || path.join(dataDir, "validator-cache"),
     validatorTimeoutMs: Number(source.EFAKTURA_VALIDATOR_TIMEOUT_MS ?? "20000"),
     workerMs: Number(source.EFAKTURA_WORKER_MS ?? "400"),
+    provision: readProvision(env, source),
   };
 }
 
@@ -73,4 +76,19 @@ function readHost(source: NodeJS.ProcessEnv): string {
     throw new Error("EFAKTURA_HOST je neplatný.");
   }
   return raw;
+}
+
+function readProvision(env: "local" | "production", source: NodeJS.ProcessEnv): LocalProvision | null {
+  const uid = source.EFAKTURA_LOCAL_PROVISION_UID?.trim() ?? "";
+  const tenantId = source.EFAKTURA_LOCAL_PROVISION_TENANT?.trim() ?? "";
+  const role = source.EFAKTURA_LOCAL_PROVISION_ROLE?.trim() ?? "";
+  if (!uid && !tenantId && !role) return null;
+  if (env === "production") throw new Error("Produkcia odmietla lokálny provisioning.");
+  if (!uid || !tenantId || !role) throw new Error("Lokálny provisioning musí mať UID, tenant aj rolu.");
+  if (!/^[A-Za-z0-9_.:@|-]{1,128}$/.test(uid)) throw new Error("Lokálny provisioning UID je neplatný.");
+  if (tenantId !== "tenant-buyer" && tenantId !== "tenant-supplier") {
+    throw new Error("Lokálny provisioning smie len syntetický tenant.");
+  }
+  if (role !== "owner" && role !== "reader") throw new Error("Lokálna rola musí byť owner alebo reader.");
+  return { uid, tenantId, role };
 }
