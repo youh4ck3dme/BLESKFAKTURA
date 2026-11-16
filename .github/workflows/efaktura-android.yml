@@ -120,12 +120,22 @@ jobs:
           JSON
 
 
-      - name: assembleDebug, unit tests, lint
+      - name: assembleDebug
+        run: gradle :app:assembleDebug --no-daemon --no-configuration-cache --stacktrace
+
+      - name: lintDebug
+        run: gradle :app:lintDebug --no-daemon --no-configuration-cache --stacktrace
+
+      - name: JVM unit test
         run: |
-          set -euo pipefail
-          gradle :app:assembleDebug :app:lintDebug :app:testDebugUnitTest \
-            --no-daemon --no-configuration-cache --stacktrace \
-            --tests com.example.ExampleUnitTest \
+          gradle :app:testDebugUnitTest --no-daemon --no-configuration-cache --stacktrace \
+            --tests com.example.ExampleUnitTest
+
+      - name: Robolectric unit tests
+        id: robolectric
+        continue-on-error: true
+        run: |
+          gradle :app:testDebugUnitTest --no-daemon --no-configuration-cache --stacktrace \
             --tests com.example.ExampleRobolectricTest \
             --tests com.example.InvoiceAiValidationTest
 
@@ -159,6 +169,13 @@ jobs:
           if not allowed <= found or extra:
               raise SystemExit(f"cleartext domains {found}, extra {extra}")
           PY
+
+      - name: Record Robolectric SDK 36 result
+        if: steps.robolectric.outcome == 'failure'
+        run: |
+          echo "Robolectric 4.16.1 cannot execute @Config(sdk = 36): DefaultSdkProvider UnsupportedOperationException."
+          echo "ExampleUnitTest passed in the previous step. Robolectric tests were executed and failed. Not upgraded."
+          exit 1
 
       - name: Upload Android reports
         if: always()
