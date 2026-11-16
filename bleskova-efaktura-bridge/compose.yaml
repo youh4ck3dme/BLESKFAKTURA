@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8088:8088"
+    environment:
+      EFAKTURA_ENV: local
+      EFAKTURA_AUTH_MODE: emulator
+      EFAKTURA_PROVIDER: local-sandbox
+      EFAKTURA_EMULATOR_SECRET: local-only-not-a-production-secret
+      EFAKTURA_SANDBOX_WEBHOOK_SECRET: local-sandbox-webhook-not-production
+    # Firebase emulátory sa nespúšťajú. Nie sú predstierané ako zelený test.

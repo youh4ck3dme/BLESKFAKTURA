@@ -1,0 +1,8 @@
+node_modules/
+dist/
+tools/validator/build/
+packages/validation/rules/cache/
+.env
+android/efaktura-client/build/
+android/efaktura-client/.gradle/
+.DS_Store

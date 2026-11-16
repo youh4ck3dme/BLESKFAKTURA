@@ -1,0 +1,245 @@
+openapi: 3.1.0
+info:
+  title: Blesková eFaktúra Bridge
+  version: 0.1.0
+  description: |
+    Vlastné API modulu, nie API finančnej správy ani certifikovaného poštára.
+    Peniaze sú desatinné reťazce. Produkčné odoslanie je zatvorené, kým nie je
+    nakonfigurovaný reálny provider a úplná validácia vrátane SK pravidiel.
+servers:
+  - url: http://127.0.0.1:8088
+security:
+  - firebaseIdToken: []
+    firebaseAppCheck: []
+paths:
+  /health:
+    get:
+      security: []
+      responses:
+        "200":
+          description: Stav bez citlivých údajov
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, environment]
+                properties:
+                  status: { type: string }
+                  environment: { type: string }
+  /v1/tenants/{tenantId}/documents/import:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: direction
+          in: query
+          schema: { $ref: "#/components/schemas/Direction" }
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema: { type: string, format: binary }
+      responses:
+        "200": { description: Import alebo deduplikácia, content: { application/json: { schema: { $ref: "#/components/schemas/ImportResult" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /v1/tenants/{tenantId}/documents:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200": { description: Stránka dokladov }
+  /v1/tenants/{tenantId}/documents/{id}:
+    get:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      responses:
+        "200": { description: Detail }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/tenants/{tenantId}/documents/{id}/original:
+    get:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      responses:
+        "200":
+          description: Byte-identický originál
+          content:
+            application/xml:
+              schema: { type: string, format: binary }
+  /v1/tenants/{tenantId}/documents/{id}/archive:
+    get:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      responses:
+        "200":
+          description: ZIP s originálom a metadátami
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+  /v1/tenants/{tenantId}/drafts:
+    post:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CanonicalDocument" }
+      responses:
+        "201": { description: Draft }
+  /v1/tenants/{tenantId}/drafts/{id}/validate:
+    post:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
+      responses:
+        "200": { description: Validačný report, content: { application/json: { schema: { $ref: "#/components/schemas/ValidationReport" } } } }
+  /v1/tenants/{tenantId}/drafts/{id}/issue:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: X-Expected-Version
+          in: header
+          schema: { type: integer }
+      responses:
+        "200": { description: Vystavený nemenný doklad }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/tenants/{tenantId}/documents/{id}/send:
+    post:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" }, { $ref: "#/components/parameters/IdempotencyKey" } ]
+      responses:
+        "202": { description: Zaradené do outboxu alebo existujúci stav }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/tenants/{tenantId}/documents/{id}/delivery:
+    get:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      responses:
+        "200": { description: Stav doručenia, nie úhrada }
+  /v1/tenants/{tenantId}/documents/{id}/notes:
+    post:
+      parameters: [ { $ref: "#/components/parameters/TenantId" }, { $ref: "#/components/parameters/DocumentId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "201": { description: Oddelená interná poznámka }
+  /v1/providers/{providerId}/webhooks:
+    post:
+      security: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-Provider-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: Prijaté, duplicitné alebo ignorované out-of-order }
+        "401": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    firebaseIdToken:
+      type: http
+      scheme: bearer
+    firebaseAppCheck:
+      type: apiKey
+      in: header
+      name: X-Firebase-AppCheck
+  parameters:
+    TenantId:
+      name: tenantId
+      in: path
+      required: true
+      schema: { type: string }
+    DocumentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Chyba
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
+  schemas:
+    Direction:
+      type: string
+      enum: [INBOUND, OUTBOUND]
+    DocumentKind:
+      type: string
+      enum: [INVOICE, CREDIT_NOTE]
+    ValidationStatus:
+      type: string
+      enum: [NOT_RUN, VALID, INVALID, UNAVAILABLE, UNSUPPORTED]
+    DeliveryStatus:
+      type: string
+      enum: [NOT_REQUESTED, QUEUED, SUBMITTING, PROVIDER_ACCEPTED, DELIVERED, REJECTED, UNKNOWN, FAILED]
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: string, pattern: "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$" }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+    ApiError:
+      type: object
+      required: [code, message, correlationId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        correlationId: { type: string }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/ValidationIssue" }
+    ValidationIssue:
+      type: object
+      required: [layer, severity, ruleId, message]
+      properties:
+        layer: { type: string, enum: [XML_SECURITY, XSD, EN16931, PEPPOL, SK, DOMAIN] }
+        severity: { type: string, enum: [ERROR, WARNING] }
+        ruleId: { type: string }
+        path: { type: string }
+        message: { type: string }
+    ValidationReport:
+      type: object
+      required: [status, rulesetVersion, validatedSha256, issues, productionEligible, technicalPass]
+      properties:
+        status: { $ref: "#/components/schemas/ValidationStatus" }
+        rulesetVersion: { type: string }
+        validatedSha256: { type: string }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/ValidationIssue" }
+        productionEligible: { type: boolean }
+        technicalPass: { type: boolean }
+    ImportResult:
+      type: object
+      required: [deduplicated, document]
+      properties:
+        deduplicated: { type: boolean }
+        code: { type: string }
+        document: { type: object }
+    CanonicalDocument:
+      type: object
+      description: Normalizovaný doklad. Čísla sú stringy, nie JSON number.
+      additionalProperties: true

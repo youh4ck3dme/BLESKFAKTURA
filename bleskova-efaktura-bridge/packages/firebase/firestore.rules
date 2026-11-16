@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function member(tenantId) {
+      return signedIn() && request.auth.uid in get(/databases/$(database)/documents/tenants/$(tenantId)).data.memberUids;
+    }
+    match /tenants/{tenantId} {
+      allow read: if member(tenantId);
+      allow write: if false;
+      match /documents/{documentId} {
+        allow read: if member(tenantId);
+        allow create, update: if false;
+        allow delete: if false;
+        match /notes/{noteId} {
+          allow read: if member(tenantId);
+          allow create: if member(tenantId) && request.resource.data.keys().hasOnly(['text', 'createdAt', 'authorUid']);
+          allow update, delete: if false;
+        }
+      }
+      match /originals/{documentId} {
+        allow read: if member(tenantId);
+        allow write: if false;
+      }
+      match /delivery/{documentId} {
+        allow read: if member(tenantId);
+        allow write: if false;
+      }
+      match /validation/{documentId} {
+        allow read: if member(tenantId);
+        allow write: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "bleskova-efaktura-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0 <23"
+  },
+  "description": "Lokálny most elektronickej fakturácie (UBL 2.1 / Peppol BIS Billing 3.0) pre Bleskovú Faktúru. Nie je legislatívne certifikovaný a bez reálneho poštára neodosiela produkčne.",
+  "scripts": {
+    "build:validator": "mkdir -p tools/validator/build && javac --release 17 -cp tools/validator/lib/Saxon-HE-12.9.jar:tools/validator/lib/xmlresolver-5.3.3.jar:tools/validator/lib/xmlresolver-5.3.3-data.jar -d tools/validator/build tools/validator/src/main/java/sk/bizagent/efaktura/validator/ValidatorMain.java",
+    "build": "npm run build:validator && tsc -p tsconfig.json",
+    "test": "npm run build && node --test --test-concurrency=1 dist/tests/*.test.js",
+    "start": "node dist/apps/api/src/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "0.9.8",
+    "decimal.js": "10.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "typescript": "5.7.2"
+  }
+}
