@@ -114,6 +114,16 @@ export class SqliteStore implements DocumentStore {
     if (preparedXml) this.putOriginal(doc.id, preparedXml);
   }
 
+  saveDocumentIfVersion(doc: StoredDocument, expectedVersion: number): boolean {
+    return this.transaction(() => {
+      const current = this.getDocument(doc.id);
+      if (!current || current.version !== expectedVersion) return false;
+      if (doc.version !== expectedVersion + 1) return false;
+      this.putDocument(doc);
+      return true;
+    });
+  }
+
   listDocuments(tenantId: string): StoredDocument[] {
     const rows = this.db.prepare("SELECT json FROM documents WHERE tenant_id = ? ORDER BY created_at DESC").all(tenantId);
     return rows.map((row) => this.hydrate(String((row as { json: string }).json)));
@@ -227,6 +237,7 @@ export class SqliteStore implements DocumentStore {
       const reconcile = job.phase === "SUBMITTING" || job.phase === "SUBMITTED" || job.state === "UNCERTAIN";
       job.leaseUntil = now + leaseMs;
       job.attempts += 1;
+      if (!reconcile) job.phase = "SUBMITTING";
       this.saveOutbox(job);
       return { job, reconcile };
     });

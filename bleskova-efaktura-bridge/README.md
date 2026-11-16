@@ -8,7 +8,7 @@ Overenie zdrojov: 2026-11-16. Node 22, TypeScript 5.7, JDK 17, Saxon-HE 12.9, Sc
 
 - Import UBL Invoice a CreditNote, karanténa CII ako `UNSUPPORTED_SYNTAX`.
 - XSD + EN16931 + Peppol Schematron cez lokálny Java validátor. Slovenský XLSX FS SR v1.13 je len pripnutý, nespúšťa sa.
-- Draft, validácia, atomické vystavenie, sandbox outbox, webhook s podpisom.
+- Draft, validácia, atomické vystavenie, sandbox outbox, webhook s podpisom. Send ukladá frontu, úlohu a idempotentný výsledok v jednej transakcii. `UNKNOWN` ostáva vo fronte s backoffom. Novší webhook neprepíše starší výsledok workera.
 - Lokálny SQLite súbor (`EFAKTURA_DATA_DIR`). Nie je to distribuovaná produkčná databáza.
 - `UnconfiguredProvider` vracia chybu konfigurácie. Sandbox nikdy nerobí produkčnú doručenku.
 

@@ -72,6 +72,8 @@ export interface DocumentStore {
   putMember(uid: string, tenantId: string, roles: string[]): void;
   getDocument(id: string): StoredDocument | undefined;
   putDocument(doc: StoredDocument): void;
+  /** Write only when the stored version is still expectedVersion. Join an open transaction; do not call this with a stale object from before an await. */
+  saveDocumentIfVersion(doc: StoredDocument, expectedVersion: number): boolean;
   listDocuments(tenantId: string): StoredDocument[];
   listAllDocuments(): StoredDocument[];
   countDocuments(tenantId?: string): number;
@@ -106,6 +108,7 @@ export class MemoryStore implements DocumentStore {
   readonly sequences = new Map<string, number>();
   readonly outbox: OutboxJob[] = [];
   private readonly tails = new Map<string, Promise<void>>();
+  private txDepth = 0;
 
   memberKey(uid: string, tenantId: string): string {
     return `${uid}|${tenantId}`;
@@ -133,6 +136,16 @@ export class MemoryStore implements DocumentStore {
 
   putDocument(doc: StoredDocument): void {
     this.documents.set(doc.id, doc);
+  }
+
+  saveDocumentIfVersion(doc: StoredDocument, expectedVersion: number): boolean {
+    return this.transaction(() => {
+      const current = this.getDocument(doc.id);
+      if (!current || current.version !== expectedVersion) return false;
+      if (doc.version !== expectedVersion + 1) return false;
+      this.putDocument(doc);
+      return true;
+    });
   }
 
   listDocuments(tenantId: string): StoredDocument[] {
@@ -206,12 +219,15 @@ export class MemoryStore implements DocumentStore {
   }
 
   claimOutbox(now: number, leaseMs: number): ClaimedJob | undefined {
-    const job = this.outbox.find((item) => (item.state === "PENDING" || item.state === "UNCERTAIN") && item.leaseUntil < now);
-    if (!job) return undefined;
-    const reconcile = job.phase === "SUBMITTING" || job.phase === "SUBMITTED" || job.state === "UNCERTAIN";
-    job.leaseUntil = now + leaseMs;
-    job.attempts += 1;
-    return { job, reconcile };
+    return this.transaction(() => {
+      const job = this.outbox.find((item) => (item.state === "PENDING" || item.state === "UNCERTAIN") && item.leaseUntil < now);
+      if (!job) return undefined;
+      const reconcile = job.phase === "SUBMITTING" || job.phase === "SUBMITTED" || job.state === "UNCERTAIN";
+      job.leaseUntil = now + leaseMs;
+      job.attempts += 1;
+      if (!reconcile) job.phase = "SUBMITTING";
+      return { job, reconcile };
+    });
   }
 
   saveOutbox(job: OutboxJob): void {
@@ -240,7 +256,39 @@ export class MemoryStore implements DocumentStore {
   }
 
   transaction<T>(fn: () => T): T {
-    return fn();
+    if (this.txDepth > 0) return fn();
+    const snapshot = {
+      documents: new Map([...this.documents].map(([key, doc]) => [key, structuredClone(doc)])),
+      originals: new Map([...this.originals].map(([key, bytes]) => [key, new Uint8Array(bytes)])),
+      notes: this.notes.map((note) => structuredClone(note)),
+      idempotency: new Map([...this.idempotency].map(([key, record]) => [key, structuredClone(record)])),
+      hashes: new Map(this.hashes),
+      numbers: new Map(this.numbers),
+      sequences: new Map(this.sequences),
+      outbox: this.outbox.map((job) => structuredClone(job)),
+    };
+    this.txDepth += 1;
+    try {
+      return fn();
+    } catch (error) {
+      this.documents.clear();
+      for (const [key, doc] of snapshot.documents) this.documents.set(key, doc);
+      this.originals.clear();
+      for (const [key, bytes] of snapshot.originals) this.originals.set(key, bytes);
+      this.notes.splice(0, this.notes.length, ...snapshot.notes);
+      this.idempotency.clear();
+      for (const [key, record] of snapshot.idempotency) this.idempotency.set(key, record);
+      this.hashes.clear();
+      for (const [key, value] of snapshot.hashes) this.hashes.set(key, value);
+      this.numbers.clear();
+      for (const [key, value] of snapshot.numbers) this.numbers.set(key, value);
+      this.sequences.clear();
+      for (const [key, value] of snapshot.sequences) this.sequences.set(key, value);
+      this.outbox.splice(0, this.outbox.length, ...snapshot.outbox);
+      throw error;
+    } finally {
+      this.txDepth -= 1;
+    }
   }
 
   close(): void {}

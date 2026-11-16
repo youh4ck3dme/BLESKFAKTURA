@@ -6,9 +6,9 @@ Budúci adapter implementuje `DeliveryProvider` a musí prejsť rovnaké očaká
 
 1. Oficiálna API dokumentácia zvoleného certifikovaného poštára a presná verzia, ktorú budeme pinovať.
 2. Sandbox credentials v Secret Manageri, nie v repe ani v URL. Iný secret pre webhook signing.
-3. Podpis webhooku overený nad raw body, okno času, ochrana pred replay. Duplicitné a out-of-order udalosti nesmú vrátiť stav dozadu.
+3. Podpis webhooku overený nad raw body, okno času, ochrana pred replay. Duplicitný rovnaký stav a out-of-order udalosť nesmú vrátiť stav dozadu. `DELIVERED`, `REJECTED` a `FAILED` sú pre automatický prechod terminálne. Worker aj webhook čítajú aktuálny riadok v jednej transakcii a nezdieľajú sa cez pamäťový mutex.
 4. Mandát firmy: registrácia účastníka u poštára je samostatný právny krok, modul ju nesimuluje ako hotovú.
-5. Idempotencia submitu. Ak ju poštár nepotvrdzuje, timeout po submit je `UNKNOWN` a ďalší krok je lookup, nie nová faktúra.
+5. Idempotencia submitu. Ak ju poštár nepotvrdzuje, timeout po submit je `UNKNOWN` a ďalší krok je lookup s backoffom, nie nová faktúra a nie uzavretie jobu, kým lookup nepotvrdí konečný stav.
 6. Oddeliť `PROVIDER_ACCEPTED`, transport `DELIVERED`, biznis odpoveď a reporting finančnej správe. Bez dokladu z konektora sa reporting nehlási.
 7. Mapovanie slovenských pravidiel: dnes je FS XLSX v1.13 (2026-10-29) len uložený. Kým z neho nie je spúšťaný ruleset, produkčné send zostáva zatvorené aj pri zelenej EN16931/Peppol kontrole.
 8. Zmluvný test: jeden pozitívny a jeden negatívny doklad v sandboxe poštára, plus zákaz produkčného endpointu v lokálnom compose.

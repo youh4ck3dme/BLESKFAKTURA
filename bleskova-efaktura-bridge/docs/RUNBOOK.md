@@ -38,7 +38,7 @@ curl -sS -H "Authorization: $AUTH" -H "X-Firebase-AppCheck: $APP" \
   "http://127.0.0.1:8088/v1/tenants/tenant-buyer/documents/import?direction=INBOUND"
 ```
 
-Opakovanie toho istého kľúča vráti ten istý doklad. Iný obsah s tým istým kľúčom je `IDEMPOTENCY_PAYLOAD_MISMATCH`. Po deterministickej chybe sa kľúč nezasekne v `IN_PROGRESS`. Obnoviteľná chyba ide do `RETRYABLE`. Neistý výsledok poštára je `UNKNOWN` a ďalší tick robí lookup.
+Opakovanie toho istého kľúča vráti ten istý doklad. Iný obsah s tým istým kľúčom je `IDEMPOTENCY_PAYLOAD_MISMATCH`. Po deterministickej chybe sa kľúč nezasekne v `IN_PROGRESS`. Obnoviteľná chyba ide do `RETRYABLE`. Neistý výsledok poštára je `UNKNOWN` a ďalší tick robí lookup, nie druhý submit.
 
 Sandbox issue/send/delivery prešiel aj z Kotlin klienta (`BridgeLiveTest`). `productionReceipt` bol `false`.
 
@@ -50,7 +50,11 @@ Ak Java/Saxon nebeží, report je `UNAVAILABLE` a send aj issue ostanú zatvoren
 
 ## Timeout poštára
 
-Stav `UNKNOWN`, potom lookup. Nevytváraj druhý doklad a nemíňaj ďalšie číslo. Sandbox timeout je `X-Sandbox-Scenario: timeout` a funguje iba pri `local-sandbox`.
+Stav `UNKNOWN` nie je koniec jobu. Po timeoute worker uloží neistý outbox a hneď urobí lookup. Ak lookup vráti znova `UNKNOWN`, job ostane `UNCERTAIN` s rastúcim backoffom (1 s, 2 s, 4 s, …, strop 32 s) a ďalší tick pred `leaseUntil` nič neclaimne. Nevytvára sa druhý submit ani druhý doklad. Job sa uzavrie až pri konečnom stave.
+
+`QUEUED`, outbox a idempotentný výsledok sendu sa zapisujú v jednej databázovej transakcii. Zlyhanie insertu úlohy vráti aj stav dokladu. Reštart potom retry urobí znova, nenechá `QUEUED` bez jobu.
+
+Webhook a worker používajú tie isté pravidlá prechodu. V transakcii čítajú aktuálny riadok a zapisujú ho len cez CAS verzie `expected + 1`. Pamäťový mutex na to nestačí, lebo dve SQLite spojenia ho nezdieľajú. `DELIVERED`, `REJECTED` a `FAILED` sa automaticky nevracajú späť. Starší výsledok submitu neprepíše novší webhook. Duplicitný rovnaký stav nemení verziu. Sandbox timeout je `X-Sandbox-Scenario: timeout` a funguje iba pri `local-sandbox`.
 
 ## Retencia
 

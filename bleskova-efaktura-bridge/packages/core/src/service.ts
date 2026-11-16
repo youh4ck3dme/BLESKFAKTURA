@@ -49,6 +49,19 @@ export function createDocumentService(options: ServiceOptions) {
     REJECTED: 6,
     FAILED: 6,
   };
+  const TERMINAL_DELIVERY = new Set<DeliveryStatus>(["DELIVERED", "REJECTED", "FAILED"]);
+
+  function allowedDeliveryStatus(current: DeliveryStatus, next: DeliveryStatus): DeliveryStatus | undefined {
+    if (next === current) return undefined;
+    if (TERMINAL_DELIVERY.has(current)) return undefined;
+    if (rank[next] < rank[current]) return undefined;
+    return next;
+  }
+
+  function lookupBackoffMs(attempts: number): number {
+    const step = Math.min(Math.max(attempts, 1), 6);
+    return 1_000 * 2 ** (step - 1);
+  }
 
   function ctxOrThrow(ctx: RequestContext, roles: Set<string>): TenantProfile {
     const member = store.getMember(ctx.uid, ctx.tenantId);
@@ -93,9 +106,13 @@ export function createDocumentService(options: ServiceOptions) {
       store.putIdempotency(id, { requestHash, state: "IN_PROGRESS", updatedAt: now });
       try {
         const value = await fn();
+        const done = store.getIdempotency(id);
+        if (done?.state === "COMPLETED") return (done.response ?? value) as T;
         store.putIdempotency(id, { requestHash, state: "COMPLETED", response: value, updatedAt: Date.now() });
         return value;
       } catch (error) {
+        const done = store.getIdempotency(id);
+        if (done?.state === "COMPLETED") return done.response as T;
         const state = classify(error);
         if (state === "REJECTED" && error instanceof AppError) {
           store.putIdempotency(id, {
@@ -157,6 +174,63 @@ export function createDocumentService(options: ServiceOptions) {
   function forceLocalReceipt(doc: StoredDocument): void {
     const caps = options.provider.capabilities();
     if (caps.simulated || !caps.productionReceipts || caps.environment !== "production") doc.productionReceipt = false;
+  }
+
+  function projectDelivery(fresh: StoredDocument, patch: {
+    status: DeliveryStatus;
+    providerMessageId?: string;
+    simulated: boolean;
+    productionReceipt: boolean;
+    detail?: string;
+  }): StoredDocument | undefined {
+    const next = allowedDeliveryStatus(fresh.deliveryStatus, patch.status);
+    if (!next) return undefined;
+    const updated: StoredDocument = {
+      ...fresh,
+      deliveryStatus: next,
+      providerMessageId: patch.providerMessageId ?? fresh.providerMessageId,
+      simulatedDelivery: patch.simulated || options.provider.capabilities().simulated,
+      productionReceipt: patch.productionReceipt,
+      deliveryDetail: patch.detail ?? fresh.deliveryDetail,
+      version: fresh.version + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    forceLocalReceipt(updated);
+    return updated;
+  }
+
+  function commitDelivery(documentId: string, patch: {
+    status: DeliveryStatus;
+    providerMessageId?: string;
+    simulated: boolean;
+    productionReceipt: boolean;
+    detail?: string;
+  } | undefined, job?: OutboxJob): { applied: boolean; status?: DeliveryStatus; productionReceipt: boolean; version?: number } {
+    return store.transaction(() => {
+      const fresh = store.getDocument(documentId);
+      if (!fresh) {
+        if (job) {
+          job.state = "DONE";
+          store.saveOutbox(job);
+        }
+        return { applied: false, productionReceipt: false };
+      }
+      if (job && job.state === "UNCERTAIN" && TERMINAL_DELIVERY.has(fresh.deliveryStatus)) {
+        job.state = "DONE";
+        job.phase = "SUBMITTED";
+      }
+      let applied = false;
+      let current = fresh;
+      if (patch) {
+        const projected = projectDelivery(fresh, patch);
+        if (projected && store.saveDocumentIfVersion(projected, fresh.version)) {
+          applied = true;
+          current = projected;
+        }
+      }
+      if (job) store.saveOutbox(job);
+      return { applied, status: current.deliveryStatus, productionReceipt: current.productionReceipt, version: current.version };
+    });
   }
 
   async function validateBytes(xml: Uint8Array, canonical?: CanonicalDocument): Promise<ValidationReport> {
@@ -415,8 +489,9 @@ export function createDocumentService(options: ServiceOptions) {
     },
     async send(ctx: RequestContext, id: string, idempotencyKey: string, scenario?: string) {
       ctxOrThrow(ctx, SEND_ROLES);
-      const hash = sha256(Buffer.from(`${id}|${scenario ?? ""}`));
-      return runIdempotent(ctx.tenantId, `send|${id}`, idempotencyKey, hash, async () => {
+      const requestHash = sha256(Buffer.from(`${id}|${scenario ?? ""}`));
+      const idemId = `${ctx.tenantId}|send|${id}|${idempotencyKey}`;
+      return runIdempotent(ctx.tenantId, `send|${id}`, idempotencyKey, requestHash, async () => {
         return store.lock(`doc|${id}`, async () => {
           const doc = store.getDocument(id);
           if (!doc || doc.tenantId !== ctx.tenantId) throw new AppError("NOT_FOUND", 404, "Doklad neexistuje.");
@@ -424,7 +499,12 @@ export function createDocumentService(options: ServiceOptions) {
             throw new AppError("PRECONDITION_FAILED", 409, "Odoslať možno len vystavený odberateľský doklad.");
           }
           if (doc.deliveryStatus !== "NOT_REQUESTED" && doc.deliveryStatus !== "FAILED") {
-            return publicDoc(doc);
+            return store.transaction(() => {
+              const fresh = store.getDocument(id) ?? doc;
+              const view = publicDoc(fresh);
+              store.putIdempotency(idemId, { requestHash, state: "COMPLETED", response: structuredClone(view), updatedAt: Date.now() });
+              return view;
+            });
           }
           const caps = options.provider.capabilities();
           if (options.env === "production" && (caps.environment !== "production" || caps.simulated || caps.providerId === "local-sandbox")) {
@@ -440,11 +520,6 @@ export function createDocumentService(options: ServiceOptions) {
           if (options.env === "production" && !doc.validation.productionEligible) {
             throw new AppError("PRODUCTION_GATE", 409, "Chýba úplná validácia vrátane slovenských pravidiel. Produkčné odoslanie je zatvorené.");
           }
-          doc.deliveryStatus = "QUEUED";
-          doc.version += 1;
-          doc.updatedAt = new Date().toISOString();
-          doc.productionReceipt = false;
-          store.putDocument(doc);
           const job: OutboxJob = {
             id: newId(),
             tenantId: ctx.tenantId,
@@ -456,8 +531,29 @@ export function createDocumentService(options: ServiceOptions) {
             state: "PENDING",
             phase: "NEW",
           };
-          store.addOutbox(job);
-          return publicDoc(doc);
+          return store.transaction(() => {
+            const fresh = store.getDocument(id);
+            if (!fresh || fresh.tenantId !== ctx.tenantId) throw new AppError("NOT_FOUND", 404, "Doklad neexistuje.");
+            if (fresh.deliveryStatus !== "NOT_REQUESTED" && fresh.deliveryStatus !== "FAILED") {
+              const view = publicDoc(fresh);
+              store.putIdempotency(idemId, { requestHash, state: "COMPLETED", response: structuredClone(view), updatedAt: Date.now() });
+              return view;
+            }
+            const queued: StoredDocument = {
+              ...fresh,
+              deliveryStatus: "QUEUED",
+              version: fresh.version + 1,
+              updatedAt: new Date().toISOString(),
+              productionReceipt: false,
+            };
+            if (!store.saveDocumentIfVersion(queued, fresh.version)) {
+              throw new Error("cas-conflict");
+            }
+            store.addOutbox(job);
+            const view = publicDoc(queued);
+            store.putIdempotency(idemId, { requestHash, state: "COMPLETED", response: structuredClone(view), updatedAt: Date.now() });
+            return view;
+          });
         });
       });
     },
@@ -469,80 +565,74 @@ export function createDocumentService(options: ServiceOptions) {
         const found = store.claimOutbox(now, 30_000);
         if (!found) return undefined;
         if (!found.reconcile) {
-          found.job.phase = "SUBMITTING";
-          store.saveOutbox(found.job);
+          commitDelivery(found.job.documentId, {
+            status: "SUBMITTING",
+            simulated: options.provider.capabilities().simulated,
+            productionReceipt: false,
+          }, found.job);
         }
         return found;
       });
       if (!claimed) return { processed: false };
       const job = claimed.job;
-      const doc = store.getDocument(job.documentId);
-      if (!doc?.preparedXml) {
+      const snapshot = store.getDocument(job.documentId);
+      if (!snapshot?.preparedXml) {
         job.state = "DONE";
         store.saveOutbox(job);
         return { processed: true };
       }
-      const caps = options.provider.capabilities();
       try {
         if (claimed.reconcile) {
-          const looked = await options.provider.lookup({ tenantId: job.tenantId, documentId: job.documentId });
-          doc.deliveryStatus = looked.status;
-          doc.providerMessageId = looked.providerMessageId ?? doc.providerMessageId;
-          doc.simulatedDelivery = looked.simulated || caps.simulated;
-          doc.productionReceipt = looked.productionReceipt === true && caps.productionReceipts && caps.environment === "production";
-          doc.deliveryDetail = `reconciled:${looked.detail ?? ""}`;
-          job.state = "DONE";
-          job.phase = "SUBMITTED";
+          await reconcileLookup(job, now);
         } else {
-          doc.deliveryStatus = "SUBMITTING";
           try {
             const submission = await options.provider.submit({
               tenantId: job.tenantId,
               documentId: job.documentId,
-              sha256: doc.sha256,
-              xml: doc.preparedXml,
+              sha256: snapshot.sha256,
+              xml: snapshot.preparedXml,
               idempotencyKey: job.idempotencyKey,
               scenario: job.scenario,
             });
-            doc.deliveryStatus = submission.status;
-            doc.providerMessageId = submission.providerMessageId;
-            doc.simulatedDelivery = submission.simulated || caps.simulated;
-            doc.productionReceipt = submission.productionReceipt === true && caps.productionReceipts && caps.environment === "production";
-            doc.deliveryDetail = submission.detail;
             job.state = "DONE";
             job.phase = "SUBMITTED";
+            commitDelivery(job.documentId, {
+              status: submission.status,
+              providerMessageId: submission.providerMessageId,
+              simulated: submission.simulated,
+              productionReceipt: submission.productionReceipt,
+              detail: submission.detail,
+            }, job);
           } catch (error) {
             if (error instanceof Error && error.name === "ProviderTimeoutError") {
-              doc.deliveryStatus = "UNKNOWN";
-              doc.deliveryDetail = "timeout-reconcile";
-              doc.simulatedDelivery = caps.simulated;
-              doc.productionReceipt = false;
               job.state = "UNCERTAIN";
               job.phase = "SUBMITTED";
-              store.putDocument(doc);
-              store.saveOutbox(job);
-              const looked = await options.provider.lookup({ tenantId: job.tenantId, documentId: job.documentId });
-              doc.deliveryStatus = looked.status;
-              doc.providerMessageId = looked.providerMessageId ?? doc.providerMessageId;
-              doc.simulatedDelivery = looked.simulated || caps.simulated;
-              doc.productionReceipt = looked.productionReceipt === true && caps.productionReceipts && caps.environment === "production";
-              doc.deliveryDetail = `reconciled:${looked.detail ?? ""}`;
+              job.leaseUntil = now + lookupBackoffMs(job.attempts);
+              commitDelivery(job.documentId, {
+                status: "UNKNOWN",
+                simulated: options.provider.capabilities().simulated,
+                productionReceipt: false,
+                detail: "timeout-reconcile",
+              }, job);
+              await reconcileLookup(job, now);
+            } else {
               job.state = "DONE";
               job.phase = "SUBMITTED";
-            } else {
-              doc.deliveryStatus = "FAILED";
-              doc.deliveryDetail = "failed";
-              doc.productionReceipt = false;
-              job.state = "DONE";
+              commitDelivery(job.documentId, {
+                status: "FAILED",
+                simulated: options.provider.capabilities().simulated,
+                productionReceipt: false,
+                detail: "failed",
+              }, job);
             }
           }
         }
-      } finally {
-        forceLocalReceipt(doc);
-        doc.version += 1;
-        doc.updatedAt = new Date().toISOString();
-        store.putDocument(doc);
+      } catch (error) {
+        job.state = "UNCERTAIN";
+        job.phase = "SUBMITTED";
+        job.leaseUntil = now + lookupBackoffMs(job.attempts);
         store.saveOutbox(job);
+        throw error;
       }
       return { processed: true };
     },
@@ -559,19 +649,47 @@ export function createDocumentService(options: ServiceOptions) {
         ? store.getDocument(event.documentId)
         : store.listAllDocuments().find((item) => item.providerMessageId === event.providerMessageId);
       if (!doc) return { duplicate: false, applied: false, ignored: true };
-      if (rank[event.status] < rank[doc.deliveryStatus] || (doc.deliveryStatus === "REJECTED" && event.status === "DELIVERED")) {
-        return { duplicate: false, applied: false, ignored: true, reason: "out_of_order" };
+      const result = commitDelivery(doc.id, {
+        status: event.status,
+        providerMessageId: event.providerMessageId,
+        simulated: event.simulated,
+        productionReceipt: event.productionReceipt,
+      });
+      if (!result.applied) {
+        return {
+          duplicate: false,
+          applied: false,
+          ignored: true,
+          reason: result.status === event.status ? "duplicate_status" : "out_of_order",
+        };
       }
-      doc.deliveryStatus = event.status;
-      doc.providerMessageId = event.providerMessageId;
-      doc.simulatedDelivery = event.simulated;
-      doc.productionReceipt = event.productionReceipt === true && options.provider.capabilities().productionReceipts && options.provider.capabilities().environment === "production";
-      doc.updatedAt = new Date().toISOString();
-      doc.version += 1;
-      store.putDocument(doc);
-      return { duplicate: false, applied: true, simulated: event.simulated, productionReceipt: doc.productionReceipt };
+      return { duplicate: false, applied: true, simulated: event.simulated, productionReceipt: result.productionReceipt };
     },
   };
+
+  async function reconcileLookup(job: OutboxJob, now: number): Promise<void> {
+    const current = store.getDocument(job.documentId);
+    const looked = await options.provider.lookup({
+      tenantId: job.tenantId,
+      documentId: job.documentId,
+      providerMessageId: current?.providerMessageId,
+    });
+    if (looked.status === "UNKNOWN") {
+      job.state = "UNCERTAIN";
+      job.phase = "SUBMITTED";
+      job.leaseUntil = now + lookupBackoffMs(job.attempts);
+    } else {
+      job.state = "DONE";
+      job.phase = "SUBMITTED";
+    }
+    commitDelivery(job.documentId, {
+      status: looked.status,
+      providerMessageId: looked.providerMessageId,
+      simulated: looked.simulated,
+      productionReceipt: looked.productionReceipt,
+      detail: `reconciled:${looked.detail ?? ""}`,
+    }, job);
+  }
 }
 
 function mustDraft(store: DocumentStore, ctx: RequestContext, id: string): StoredDocument {
