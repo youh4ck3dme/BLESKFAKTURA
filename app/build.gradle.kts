@@ -153,7 +153,8 @@ dependencies {
 
 tasks.withType<Test> {
   failFast = true
-  timeout.set(Duration.ofMinutes(2))
+  // This is the budget for the entire multi-SDK suite, including cold SDK setup.
+  timeout.set(Duration.ofMinutes(15))
   testLogging {
     events("passed", "failed", "skipped")
   }

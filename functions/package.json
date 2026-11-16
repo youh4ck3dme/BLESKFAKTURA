@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "test": "pnpm run build && node --test test/verifier.test.mjs",
-    "test:rules": "pnpm --registry=https://registry.npmjs.org/ dlx firebase-tools@15.36.0 emulators:exec --config ../firebase.json --project demo-bleskova-faktura --only firestore \"node --test ../firestore.test.js\"",
+    "test:rules": "pnpm --registry=https://registry.npmjs.org/ dlx --allow-build=protobufjs firebase-tools@15.36.0 emulators:exec --config ../firebase.json --project demo-bleskova-faktura --only firestore \"node --test ../firestore.test.js\"",
     "deploy": "firebase deploy --only functions:verifyPlayPurchase,functions:handlePlayRtdn --project gen-lang-client-0115180408"
   },
   "engines": {

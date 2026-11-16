@@ -13,6 +13,6 @@ fi
 printf -v gradle_command '%q ' ./gradlew "$@" --no-daemon --console=plain
 # These are disposable local emulators, always a demo project, never production.
 CI=true JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Xmx512m" "${pnpm_cmd[@]}" \
-  --registry=https://registry.npmjs.org dlx firebase-tools@15.36.0 \
+  --registry=https://registry.npmjs.org dlx --allow-build=protobufjs firebase-tools@15.36.0 \
   emulators:exec --only firestore,auth --project demo-no-project \
   --config firebase.json "$gradle_command"

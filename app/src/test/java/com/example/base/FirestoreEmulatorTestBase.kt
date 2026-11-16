@@ -45,14 +45,18 @@ abstract class FirestoreEmulatorTestBase {
         }
 
         // Never borrow the default FirebaseApp: a build can contain real release configuration.
+        val instanceId = UUID.randomUUID().toString().replace("-", "")
+        // Firebase Auth's emulator registry is keyed by API key. Reusing one key across
+        // deleted apps can notify an Auth instance whose FirebaseApp was already deleted.
+        val emulatorApiKey = "AIza" + instanceId + "abc"
         emulatorApp = FirebaseApp.initializeApp(
             context,
             FirebaseOptions.Builder()
                 .setApplicationId("1:1234567890:android:abcdef1234567890")
                 .setProjectId(PROJECT_ID)
-                .setApiKey("fake-api-key-for-emulator")
+                .setApiKey(emulatorApiKey)
                 .build(),
-            "repository-emulator-${UUID.randomUUID()}"
+            "repository-emulator-$instanceId"
         )
         firestore = FirebaseFirestore.getInstance(emulatorApp, databaseId)
         firestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
