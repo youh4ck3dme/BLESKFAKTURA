@@ -1,0 +1,169 @@
+{
+  "entities": {
+    "UserStats": {
+      "title": "UserStats",
+      "description": "User accounting summary, remaining scan credits, subscription flag, and credit reservation state.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the account owner."
+        },
+        "credits": {
+          "type": "integer",
+          "description": "Remaining AI receipt scan credits."
+        },
+        "isSubscribed": {
+          "type": "boolean",
+          "description": "Server-controlled Blesk Premium entitlement."
+        },
+        "totalInvoiced": {
+          "type": "number",
+          "description": "Aggregate gross amount across user invoices."
+        },
+        "totalInvoicedCents": {
+          "type": "integer",
+          "description": "Exact integer cents sum across user invoices."
+        },
+        "invoiceCount": {
+          "type": "integer",
+          "description": "Number of stored invoices."
+        },
+        "activeReservationId": {
+          "type": "string",
+          "description": "Active single-flight credit reservation UUID or null."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "credits",
+        "isSubscribed",
+        "totalInvoiced",
+        "totalInvoicedCents",
+        "invoiceCount",
+        "createdAt"
+      ]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Slovak accounting invoice or receipt document belonging to a single authenticated user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "supplierName": {
+          "type": "string",
+          "description": "Supplier or merchant business name."
+        },
+        "ico": {
+          "type": "string",
+          "description": "Optional Slovak ICO."
+        },
+        "dic": {
+          "type": "string",
+          "description": "Optional Slovak DIC or IC DPH."
+        },
+        "issueDate": {
+          "type": "string",
+          "description": "Normalized YYYY-MM-DD issue date."
+        },
+        "dueDate": {
+          "type": "string",
+          "description": "Optional normalized YYYY-MM-DD due date."
+        },
+        "isPaid": {
+          "type": "boolean",
+          "description": "Whether the document is already paid."
+        },
+        "currency": {
+          "type": "string",
+          "description": "3-letter ISO 4217 currency code (EUR)."
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Total gross amount including VAT."
+        },
+        "totalAmountCents": {
+          "type": "integer",
+          "description": "Exact gross amount in integer cents."
+        },
+        "vatAmount": {
+          "type": "number",
+          "description": "Optional total VAT amount."
+        },
+        "vatAmountCents": {
+          "type": "integer",
+          "description": "Optional VAT amount in integer cents."
+        },
+        "vatRate": {
+          "type": "number",
+          "description": "Optional primary VAT rate percentage."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Kancelária",
+            "Cestovné",
+            "Služby",
+            "Technika",
+            "Strava",
+            "Iné"
+          ],
+          "description": "Slovak accounting expense category."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional short expense description."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "userId",
+        "supplierName",
+        "issueDate",
+        "isPaid",
+        "currency",
+        "totalAmount",
+        "totalAmountCents",
+        "category",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserStats"
+      },
+      "description": "Per-user accounting stats, credits, and subscription state."
+    },
+    "/users/{userId}/invoices/{invoiceId}": {
+      "schema": {
+        "$ref": "#/entities/Invoice"
+      },
+      "description": "Invoices and scanned receipts owned by userId."
+    }
+  }
+}

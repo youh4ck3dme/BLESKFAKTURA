@@ -8,12 +8,12 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.configureAppCheck
@@ -22,10 +22,11 @@ import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.LoginScreen
 import com.example.ui.screens.PricingScreen
 import com.example.ui.screens.ScanScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 
 enum class AppScreen {
-    LOGIN, DASHBOARD, SCAN, PRICING
+    LOGIN, DASHBOARD, SCAN, PRICING, SETTINGS
 }
 
 class MainActivity : ComponentActivity() {
@@ -35,14 +36,11 @@ class MainActivity : ComponentActivity() {
         // Initialize Firebase App Check with launch intent before any UI or ViewModels
         configureAppCheck(this, intent)
 
-        // Enable true edge-to-edge drawing
         enableEdgeToEdge()
-        
+
         setContent {
             MyApplicationTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                Surface(modifier = Modifier.fillMaxSize()) {
                     MainAppNavigation()
                 }
             }
@@ -53,9 +51,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainAppNavigation(viewModel: InvoiceViewModel = viewModel()) {
     val currentUser by viewModel.currentUser.collectAsState()
-    var currentScreen by remember { mutableStateOf(AppScreen.LOGIN) }
+    var currentScreen by rememberSaveable { mutableStateOf(AppScreen.LOGIN) }
 
-    // Coordinate screen state based on authentication sessions
     LaunchedEffect(currentUser) {
         if (currentUser == null) {
             currentScreen = AppScreen.LOGIN
@@ -74,6 +71,7 @@ fun MainAppNavigation(viewModel: InvoiceViewModel = viewModel()) {
                 viewModel = viewModel,
                 onNavigateToScan = { currentScreen = AppScreen.SCAN },
                 onNavigateToPricing = { currentScreen = AppScreen.PRICING },
+                onNavigateToSettings = { currentScreen = AppScreen.SETTINGS },
                 onSignOut = { viewModel.signOut() }
             )
             AppScreen.SCAN -> ScanScreen(
@@ -83,6 +81,11 @@ fun MainAppNavigation(viewModel: InvoiceViewModel = viewModel()) {
             AppScreen.PRICING -> PricingScreen(
                 viewModel = viewModel,
                 onNavigateBack = { currentScreen = AppScreen.DASHBOARD }
+            )
+            AppScreen.SETTINGS -> SettingsScreen(
+                viewModel = viewModel,
+                onNavigateBack = { currentScreen = AppScreen.DASHBOARD },
+                onNavigateToPricing = { currentScreen = AppScreen.PRICING }
             )
         }
     }

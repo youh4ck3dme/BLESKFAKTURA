@@ -13,9 +13,6 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.format.ResolverStyle
 
 data class ExtractedInvoiceJson(
     val supplierName: String = "",
@@ -244,24 +241,8 @@ object InvoiceAiService {
         }
     }
 
-    private fun normalizeIsoDate(raw: String): String? {
-        if (raw.isBlank()) return null
-        val formatters = listOf(
-            DateTimeFormatter.ISO_LOCAL_DATE,
-            DateTimeFormatter.ofPattern("dd.MM.uuuu").withResolverStyle(ResolverStyle.STRICT),
-            DateTimeFormatter.ofPattern("d.M.uuuu").withResolverStyle(ResolverStyle.STRICT),
-            DateTimeFormatter.ofPattern("uuuu/MM/dd").withResolverStyle(ResolverStyle.STRICT)
-        )
-        for (formatter in formatters) {
-            try {
-                val parsed = LocalDate.parse(raw, formatter)
-                return parsed.format(DateTimeFormatter.ISO_LOCAL_DATE)
-            } catch (_: Exception) {
-                // Try next format
-            }
-        }
-        return null
-    }
+    private fun normalizeIsoDate(raw: String): String? =
+        SlovakFinanceUtils.normalizeIsoDate(raw)
 
     private fun scaleBitmapForAi(bitmap: Bitmap): Bitmap {
         val width = bitmap.width

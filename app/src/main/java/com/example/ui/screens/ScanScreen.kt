@@ -1,47 +1,105 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.net.Uri
-import android.provider.MediaStore
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.launch
-import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FilterCenterFocus
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.Invoice
+import androidx.core.content.ContextCompat
+import com.example.BuildConfig
 import com.example.data.ExtractedInvoiceJson
+import com.example.data.Invoice
+import com.example.data.ReceiptImageProcessor
+import com.example.data.SlovakFinanceUtils
 import com.example.ui.InvoiceViewModel
 import com.example.ui.ScanUiState
+import kotlinx.coroutines.launch
+import java.math.BigDecimal
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,61 +110,133 @@ fun ScanScreen(
     viewModel: InvoiceViewModel,
     onNavigateBack: () -> Unit
 ) {
+    BackHandler {
+        viewModel.startNewScan()
+        onNavigateBack()
+    }
+
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val scanState by viewModel.scanState.collectAsState()
 
     var selectedBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    var stagedUri by remember { mutableStateOf<Uri?>(null) }
+    var stagedUriString by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingCaptureUriString by rememberSaveable { mutableStateOf<String?>(null) }
     var stagedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var stagedFileName by remember { mutableStateOf<String>("") }
-    var stagedFileSize by remember { mutableStateOf<String>("") }
+    var stagedFileName by rememberSaveable { mutableStateOf("") }
+    var stagedFileSize by rememberSaveable { mutableStateOf("") }
+    var isDecodingImage by remember { mutableStateOf(false) }
+    var cameraPermissionDenied by remember { mutableStateOf(false) }
 
-    // Clear staged file when entering or when ScanState resets to Idle
+    // Clear staged file when ScanState resets to Idle without pending URI
     LaunchedEffect(scanState) {
-        if (scanState is ScanUiState.Idle) {
-            stagedUri = null
-            stagedBitmap = null
-            stagedFileName = ""
-            stagedFileSize = ""
+        if (scanState is ScanUiState.Success || scanState is ScanUiState.Error) {
+            // Keep preview reference until user cancels/saves
         }
     }
 
-    // System Image Picker launcher
-    val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            try {
-                val bitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, it)
-                stagedUri = it
-                stagedBitmap = bitmap
-                val (name, size) = getFileInfo(context, it)
-                stagedFileName = name
-                stagedFileSize = size
-            } catch (e: Exception) {
-                e.printStackTrace()
+    // Re-decode saved URI after configuration change (rotation) if needed
+    LaunchedEffect(stagedUriString) {
+        val uriStr = stagedUriString
+        if (!uriStr.isNullOrBlank() && stagedBitmap == null) {
+            isDecodingImage = true
+            runCatching {
+                ReceiptImageProcessor.decodeBoundedBitmapFromUri(context, Uri.parse(uriStr), stagedFileName.ifBlank { "doklad.jpg" })
+            }.onSuccess { decoded ->
+                stagedBitmap = decoded.bitmap
+                if (stagedFileName.isBlank()) stagedFileName = decoded.displayName
+                if (stagedFileSize.isBlank()) stagedFileSize = decoded.formattedSize
+            }.onFailure {
+                stagedUriString = null
             }
+            isDecodingImage = false
         }
     }
 
-    // Camera capture launcher
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        bitmap?.let {
-            stagedUri = null
-            stagedBitmap = it
-            stagedFileName = "fotoaparát_snímka.jpg"
-            stagedFileSize = String.format(Locale.US, "%.1f KB", (it.byteCount / 1024).toDouble())
+    fun loadImageFromUri(uri: Uri, fallbackName: String) {
+        scope.launch {
+            isDecodingImage = true
+            runCatching {
+                ReceiptImageProcessor.decodeBoundedBitmapFromUri(context, uri, fallbackName)
+            }.onSuccess { decoded ->
+                stagedUriString = uri.toString()
+                stagedBitmap = decoded.bitmap
+                stagedFileName = decoded.displayName
+                stagedFileSize = decoded.formattedSize
+                cameraPermissionDenied = false
+            }.onFailure { err ->
+                Toast.makeText(
+                    context,
+                    err.localizedMessage ?: "Obrázok sa nepodarilo načítať.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            isDecodingImage = false
         }
     }
 
-    // Auto-launch camera if requested from Dashboard
+    // Zero-permission Photo Picker (BF-14)
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        uri?.let { loadImageFromUri(it, "doklad_galeria.jpg") }
+    }
+
+    // Full-resolution TakePicture launcher via FileProvider (BF-32)
+    val takePictureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean ->
+        val captureUri = pendingCaptureUriString?.let { Uri.parse(it) }
+        if (success && captureUri != null) {
+            loadImageFromUri(captureUri, "fotoaparat_doklad.jpg")
+        }
+        pendingCaptureUriString = null
+    }
+
+    fun launchFullResCamera() {
+        runCatching {
+            val (uri, _) = ReceiptImageProcessor.createCameraCaptureUri(context)
+            pendingCaptureUriString = uri.toString()
+            takePictureLauncher.launch(uri)
+        }.onFailure { err ->
+            Toast.makeText(
+                context,
+                "Fotoaparát sa nepodarilo spustiť: ${err.localizedMessage}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // Runtime CAMERA permission request (BF-05)
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted: Boolean ->
+        if (granted) {
+            cameraPermissionDenied = false
+            launchFullResCamera()
+        } else {
+            cameraPermissionDenied = true
+        }
+    }
+
+    fun requestCameraAndCapture() {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            cameraPermissionDenied = false
+            launchFullResCamera()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (viewModel.shouldAutoLaunchCamera) {
             viewModel.shouldAutoLaunchCamera = false
-            cameraLauncher.launch()
+            requestCameraAndCapture()
         }
     }
 
@@ -120,13 +250,16 @@ fun ScanScreen(
                 title = { Text("Bleskový AI skener", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(
-                        onClick = onNavigateBack,
+                        onClick = {
+                            viewModel.startNewScan()
+                            onNavigateBack()
+                        },
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .testTag("back_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Späť",
                             tint = MaterialTheme.colorScheme.onBackground
                         )
@@ -139,9 +272,9 @@ fun ScanScreen(
             )
         },
         floatingActionButton = {
-            if (scanState is ScanUiState.Idle && stagedBitmap == null) {
+            if (scanState is ScanUiState.Idle && stagedBitmap == null && !isDecodingImage) {
                 ExtendedFloatingActionButton(
-                    onClick = { cameraLauncher.launch() },
+                    onClick = { requestCameraAndCapture() },
                     modifier = Modifier
                         .padding(8.dp)
                         .testTag("fab_instant_camera_capture"),
@@ -170,7 +303,21 @@ fun ScanScreen(
         ) {
             when (val state = scanState) {
                 is ScanUiState.Idle -> {
-                    if (stagedBitmap != null) {
+                    if (isDecodingImage) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "Optimalizujem rozlíšenie snímky...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    } else if (stagedBitmap != null) {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -178,12 +325,11 @@ fun ScanScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
 
-                            // Info badge
                             Card(
                                 colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
                                 ),
                                 shape = RoundedCornerShape(20.dp),
                                 modifier = Modifier.fillMaxWidth()
@@ -199,7 +345,7 @@ fun ScanScreen(
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
-                                        text = "Doklad bol úspešne pripravený. Kliknite na tlačidlo nižšie pre spustenie AI analýzy.",
+                                        text = "Doklad bol pripravený v plnom rozlíšení. Spustite AI analýzu nižšie.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         fontWeight = FontWeight.Medium
@@ -207,7 +353,6 @@ fun ScanScreen(
                                 }
                             }
 
-                            // Interactive file input detail box
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                 shape = RoundedCornerShape(24.dp),
@@ -224,7 +369,6 @@ fun ScanScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    // Image preview
                                     Image(
                                         bitmap = stagedBitmap!!.asImageBitmap(),
                                         contentDescription = "Náhľad vybraného dokladu",
@@ -240,7 +384,6 @@ fun ScanScreen(
 
                                     Spacer(modifier = Modifier.height(24.dp))
 
-                                    // File info card
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -280,7 +423,7 @@ fun ScanScreen(
                                         }
                                         IconButton(
                                             onClick = {
-                                                stagedUri = null
+                                                stagedUriString = null
                                                 stagedBitmap = null
                                                 stagedFileName = ""
                                                 stagedFileSize = ""
@@ -292,22 +435,22 @@ fun ScanScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
                                                 contentDescription = "Odstrániť súbor",
-                                                tint = Color(0xFFEF4444)
+                                                tint = MaterialTheme.colorScheme.error
                                             )
                                         }
                                     }
                                 }
                             }
 
-                            // Action buttons
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Button(
                                     onClick = {
-                                        selectedBitmap = stagedBitmap
-                                        viewModel.scanInvoiceImage(stagedBitmap!!)
+                                        val bmp = stagedBitmap ?: return@Button
+                                        selectedBitmap = bmp
+                                        viewModel.scanInvoiceImage(bmp)
                                     },
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -337,7 +480,11 @@ fun ScanScreen(
                                 }
 
                                 OutlinedButton(
-                                    onClick = { galleryLauncher.launch("image/*") },
+                                    onClick = {
+                                        galleryLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(52.dp)
@@ -365,11 +512,36 @@ fun ScanScreen(
                                 .fillMaxSize()
                                 .padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            Spacer(modifier = Modifier.height(10.dp))
+                            if (cameraPermissionDenied) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("camera_permission_rationale")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                        Text(
+                                            text = "Prístup k fotoaparátu bol zamietnutý. Udeľte povolenie v nastaveniach zariadenia alebo vyberte fotku z galérie.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
 
-                            // Explanatory card
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                 shape = RoundedCornerShape(20.dp),
@@ -401,7 +573,7 @@ fun ScanScreen(
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = "Odfoťte pokladničný blok alebo faktúru. AI prečíta text, identifikuje sumu, DPH, IČO aj kategóriu.",
+                                            text = "Odfoťte pokladničný blok alebo faktúru. AI prečíta text, sumu, DPH, IČO aj kategóriu.",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -409,7 +581,6 @@ fun ScanScreen(
                                 }
                             }
 
-                            // Dashed upload square area styled as a Bento tile (Now clickable file input!)
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -420,7 +591,11 @@ fun ScanScreen(
                                         border = BorderStroke(2.dp, MaterialTheme.colorScheme.outline),
                                         shape = RoundedCornerShape(24.dp)
                                     )
-                                    .clickable { galleryLauncher.launch("image/*") }
+                                    .clickable {
+                                        galleryLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    }
                                     .padding(24.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -436,7 +611,7 @@ fun ScanScreen(
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
                                     Text(
-                                        text = "Zamerajte doklad alebo kliknite sem a vyberte súbor",
+                                        text = "Kliknite sem a vyberte fotku dokladu z galérie",
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onSurface,
                                         textAlign = TextAlign.Center
@@ -452,14 +627,12 @@ fun ScanScreen(
                                 }
                             }
 
-                            // Scan Action buttons (Bento Grid aligned)
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                // Camera Action
                                 Button(
-                                    onClick = { cameraLauncher.launch() },
+                                    onClick = { requestCameraAndCapture() },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(52.dp)
@@ -480,9 +653,12 @@ fun ScanScreen(
                                     }
                                 }
 
-                                // Gallery Action
                                 OutlinedButton(
-                                    onClick = { galleryLauncher.launch("image/*") },
+                                    onClick = {
+                                        galleryLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(52.dp)
@@ -503,32 +679,33 @@ fun ScanScreen(
                                     }
                                 }
 
-                                // Sample simulation button
-                                Button(
-                                    onClick = {
-                                        val bitmap = generateSampleReceiptBitmap()
-                                        stagedUri = null
-                                        stagedBitmap = bitmap
-                                        stagedFileName = "vzorovy_tesco_doklad.png"
-                                        stagedFileSize = "23.4 KB"
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(52.dp)
-                                        .testTag("scan_mock_sample_button"),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondary,
-                                        contentColor = MaterialTheme.colorScheme.primary
-                                    ),
-                                    shape = RoundedCornerShape(16.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
+                                if (BuildConfig.DEBUG) {
+                                    Button(
+                                        onClick = {
+                                            val bitmap = generateSampleReceiptBitmap()
+                                            stagedUriString = null
+                                            stagedBitmap = bitmap
+                                            stagedFileName = "vzorovy_tesco_doklad.png"
+                                            stagedFileSize = "23.4 KB"
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(52.dp)
+                                            .testTag("scan_mock_sample_button"),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.secondary,
+                                            contentColor = MaterialTheme.colorScheme.onSecondary
+                                        ),
+                                        shape = RoundedCornerShape(16.dp)
                                     ) {
-                                        Icon(imageVector = Icons.Default.Receipt, contentDescription = "Vzor")
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Text("Simulovať vzorový doklad (Tesco)", fontWeight = FontWeight.Bold)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Receipt, contentDescription = "Vzor")
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text("Simulovať vzorový doklad (Tesco)", fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }
@@ -544,7 +721,6 @@ fun ScanScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        // Image preview if selected
                         selectedBitmap?.let {
                             Image(
                                 bitmap = it.asImageBitmap(),
@@ -581,14 +757,25 @@ fun ScanScreen(
                 }
 
                 is ScanUiState.Success -> {
-                    // Review form screen
+                    var isSaving by remember { mutableStateOf(false) }
                     ReviewScannedInvoiceForm(
                         extracted = state.extractedData,
                         bitmap = state.bitmap,
-                        onCancel = { viewModel.startNewScan() },
+                        isSaving = isSaving,
+                        onCancel = {
+                            stagedUriString = null
+                            stagedBitmap = null
+                            viewModel.startNewScan()
+                        },
                         onConfirm = { invoice ->
-                            viewModel.saveInvoice(invoice)
-                            onNavigateBack()
+                            if (isSaving) return@ReviewScannedInvoiceForm
+                            isSaving = true
+                            stagedUriString = null
+                            stagedBitmap = null
+                            viewModel.saveScannedInvoice(invoice, state.bitmap) {
+                                isSaving = false
+                                onNavigateBack()
+                            }
                         }
                     )
                 }
@@ -606,14 +793,14 @@ fun ScanScreen(
                             modifier = Modifier
                                 .size(72.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFEF4444).copy(alpha = 0.15f))
+                                .background(MaterialTheme.colorScheme.errorContainer)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Warning,
                                 contentDescription = "Chyba",
-                                tint = Color(0xFFEF4444),
+                                tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(36.dp)
-                             )
+                            )
                         }
                         Spacer(modifier = Modifier.height(20.dp))
                         Text(
@@ -651,33 +838,56 @@ fun ScanScreen(
     }
 }
 
-// --- Composable: Review and Edit scanned invoice fields before saving ---
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReviewScannedInvoiceForm(
     extracted: ExtractedInvoiceJson,
     bitmap: Bitmap,
+    isSaving: Boolean,
     onCancel: () -> Unit,
     onConfirm: (Invoice) -> Unit
 ) {
-    var supplierName by remember { mutableStateOf<String>(extracted.supplierName) }
-    var ico by remember { mutableStateOf<String>(extracted.ico ?: "") }
-    var dic by remember { mutableStateOf<String>(extracted.dic ?: "") }
-    var totalAmountStr by remember { mutableStateOf<String>(extracted.totalAmount.toString()) }
-    var vatRateStr by remember { mutableStateOf<String>(extracted.vatRate?.toString() ?: "20.0") }
-    var issueDate by remember { mutableStateOf<String>(extracted.issueDate) }
-    var category by remember { mutableStateOf<String>(extracted.category) }
-    var description by remember { mutableStateOf<String>(extracted.description ?: "") }
+    val initialTotalCents = remember(extracted) {
+        SlovakFinanceUtils.doubleToCents(extracted.totalAmount)
+    }
+    val initialVatRate = remember(extracted) {
+        extracted.vatRate ?: 20.0
+    }
+    val initialVatCents = remember(extracted) {
+        extracted.vatAmount?.let { SlovakFinanceUtils.doubleToCents(it) }
+            ?: SlovakFinanceUtils.calculateVatCentsFromGross(initialTotalCents, BigDecimal.valueOf(initialVatRate))
+    }
 
-    var isMenuExpanded by remember { mutableStateOf<Boolean>(false) }
+    var supplierName by rememberSaveable { mutableStateOf(extracted.supplierName) }
+    var ico by rememberSaveable { mutableStateOf(extracted.ico ?: "") }
+    var dic by rememberSaveable { mutableStateOf(extracted.dic ?: "") }
+    var totalAmountStr by rememberSaveable { mutableStateOf(SlovakFinanceUtils.formatCentsForInput(initialTotalCents)) }
+    var vatRateStr by rememberSaveable { mutableStateOf(initialVatRate.toString().replace('.', ',')) }
+    var vatAmountStr by rememberSaveable { mutableStateOf(SlovakFinanceUtils.formatCentsForInput(initialVatCents)) }
+    var issueDate by rememberSaveable { mutableStateOf(extracted.issueDate) }
+    var dueDate by rememberSaveable { mutableStateOf("") }
+    var isPaid by rememberSaveable { mutableStateOf(true) }
+    var category by rememberSaveable { mutableStateOf(extracted.category) }
+    var description by rememberSaveable { mutableStateOf(extracted.description ?: "") }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    var isMenuExpanded by remember { mutableStateOf(false) }
     val categories = listOf("Kancelária", "Cestovné", "Služby", "Technika", "Strava", "Iné")
+
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = MaterialTheme.colorScheme.primary,
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+        focusedLabelColor = MaterialTheme.colorScheme.primary,
+        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(20.dp)
             .testTag("review_scanned_form"),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 32.dp)
     ) {
         item {
@@ -693,7 +903,7 @@ fun ReviewScannedInvoiceForm(
                 ) {
                     Image(
                         bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Scanned",
+                        contentDescription = "Naskenovaný doklad",
                         modifier = Modifier
                             .size(72.dp)
                             .clip(RoundedCornerShape(10.dp)),
@@ -707,7 +917,7 @@ fun ReviewScannedInvoiceForm(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Skontrolujte a prípadne upravte zistené údaje.",
+                            text = "Skontrolujte extrahovanú sumu, DPH a splatnosť pred uložením.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold
@@ -717,21 +927,33 @@ fun ReviewScannedInvoiceForm(
             }
         }
 
+        validationError?.let { err ->
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("scan_validation_error")
+                ) {
+                    Text(
+                        text = err,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+        }
+
         item {
             OutlinedTextField(
                 value = supplierName,
-                onValueChange = { supplierName = it },
+                onValueChange = { supplierName = it; validationError = null },
                 label = { Text("Názov dodávateľa") },
                 modifier = Modifier.fillMaxWidth().testTag("scanned_supplier_input"),
                 singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    focusedLabelColor = MaterialTheme.colorScheme.primary,
-                    unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                colors = fieldColors
             )
         }
 
@@ -744,14 +966,7 @@ fun ReviewScannedInvoiceForm(
                     modifier = Modifier.weight(1f).testTag("scanned_ico_input"),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = dic,
@@ -759,14 +974,7 @@ fun ReviewScannedInvoiceForm(
                     label = { Text("DIČ / IČ DPH") },
                     modifier = Modifier.weight(1f).testTag("scanned_dic_input"),
                     singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    colors = fieldColors
                 )
             }
         }
@@ -775,36 +983,56 @@ fun ReviewScannedInvoiceForm(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = totalAmountStr,
-                    onValueChange = { totalAmountStr = it },
+                    onValueChange = { totalAmountStr = it; validationError = null },
                     label = { Text("Suma s DPH (€)") },
-                    modifier = Modifier.weight(1.2f).testTag("scanned_amount_input"),
+                    modifier = Modifier.weight(1.1f).testTag("scanned_amount_input"),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    colors = fieldColors
                 )
                 OutlinedTextField(
                     value = vatRateStr,
-                    onValueChange = { vatRateStr = it },
-                    label = { Text("DPH (%)") },
-                    modifier = Modifier.weight(0.8f).testTag("scanned_vat_rate_input"),
+                    onValueChange = { vatRateStr = it; validationError = null },
+                    label = { Text("Sadzba (%)") },
+                    modifier = Modifier.weight(0.75f).testTag("scanned_vat_rate_input"),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    colors = fieldColors
                 )
+            }
+        }
+
+        item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = vatAmountStr,
+                    onValueChange = { vatAmountStr = it; validationError = null },
+                    label = { Text("Suma DPH (€)") },
+                    modifier = Modifier.weight(1f).testTag("scanned_vat_amount_input"),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    colors = fieldColors
+                )
+                TextButton(
+                    onClick = {
+                        val totalDec = SlovakFinanceUtils.parseSlovakDecimal(totalAmountStr)
+                        val rateDec = SlovakFinanceUtils.parseSlovakDecimal(vatRateStr)
+                        if (totalDec != null && totalDec > BigDecimal.ZERO && rateDec != null && rateDec >= BigDecimal.ZERO) {
+                            val totalCents = SlovakFinanceUtils.bigDecimalToCents(totalDec)
+                            val calcVat = SlovakFinanceUtils.calculateVatCentsFromGross(totalCents, rateDec)
+                            vatAmountStr = SlovakFinanceUtils.formatCentsForInput(calcVat)
+                            validationError = null
+                        } else {
+                            validationError = "Pre výpočet DPH zadajte platnú celkovú sumu a sadzbu."
+                        }
+                    },
+                    modifier = Modifier.testTag("recalculate_scan_vat_button")
+                ) {
+                    Text("Prepočítať", fontWeight = FontWeight.Bold)
+                }
             }
         }
 
@@ -812,22 +1040,32 @@ fun ReviewScannedInvoiceForm(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = issueDate,
-                    onValueChange = { issueDate = it },
+                    onValueChange = { issueDate = it; validationError = null },
                     label = { Text("Dátum vystavenia") },
-                    modifier = Modifier.weight(1.1f).testTag("scanned_date_input"),
+                    modifier = Modifier.weight(1f).testTag("scanned_date_input"),
                     singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    colors = fieldColors
                 )
 
-                // Category Selection Box (Highly compatible Custom Dropdown)
-                Box(modifier = Modifier.weight(0.9f)) {
+                OutlinedTextField(
+                    value = dueDate,
+                    onValueChange = { dueDate = it; validationError = null },
+                    label = { Text("Splatnosť (volit.)") },
+                    placeholder = { Text("YYYY-MM-DD") },
+                    modifier = Modifier.weight(1f).testTag("scanned_due_date_input"),
+                    singleLine = true,
+                    colors = fieldColors
+                )
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
                     OutlinedTextField(
                         value = category,
                         onValueChange = {},
@@ -837,8 +1075,7 @@ fun ReviewScannedInvoiceForm(
                             IconButton(onClick = { isMenuExpanded = !isMenuExpanded }) {
                                 Icon(
                                     imageVector = if (isMenuExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                                    contentDescription = "Zoznam",
-                                    tint = MaterialTheme.colorScheme.onSurface
+                                    contentDescription = "Vybrať kategóriu"
                                 )
                             }
                         },
@@ -846,14 +1083,7 @@ fun ReviewScannedInvoiceForm(
                             .fillMaxWidth()
                             .clickable { isMenuExpanded = !isMenuExpanded }
                             .testTag("scanned_category_selector"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            focusedLabelColor = MaterialTheme.colorScheme.primary,
-                            unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        colors = fieldColors
                     )
                     DropdownMenu(
                         expanded = isMenuExpanded,
@@ -871,6 +1101,23 @@ fun ReviewScannedInvoiceForm(
                         }
                     }
                 }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 6.dp)
+                ) {
+                    Text(
+                        text = "Uhradené",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Switch(
+                        checked = isPaid,
+                        onCheckedChange = { isPaid = it },
+                        modifier = Modifier.testTag("scanned_paid_switch")
+                    )
+                }
             }
         }
 
@@ -880,25 +1127,19 @@ fun ReviewScannedInvoiceForm(
                 onValueChange = { description = it },
                 label = { Text("Popis výdavku") },
                 modifier = Modifier.fillMaxWidth().testTag("scanned_description_input"),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    focusedLabelColor = MaterialTheme.colorScheme.primary,
-                    unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                colors = fieldColors
             )
         }
 
         item {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedButton(
                     onClick = onCancel,
+                    enabled = !isSaving,
                     modifier = Modifier.weight(1f).height(52.dp).testTag("cancel_scanned_button"),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.onBackground
@@ -911,24 +1152,75 @@ fun ReviewScannedInvoiceForm(
 
                 Button(
                     onClick = {
-                        val amount = totalAmountStr.toDoubleOrNull() ?: extracted.totalAmount
-                        val vRate = vatRateStr.toDoubleOrNull() ?: 20.0
-                        val vAmount = amount * (vRate / (100.0 + vRate))
+                        val trimmedSupplier = supplierName.trim()
+                        if (trimmedSupplier.isEmpty()) {
+                            validationError = "Zadajte názov dodávateľa."
+                            return@Button
+                        }
+                        val parsedAmount = SlovakFinanceUtils.parseSlovakDecimal(totalAmountStr)
+                        if (parsedAmount == null || parsedAmount <= BigDecimal.ZERO || parsedAmount > BigDecimal(1_000_000)) {
+                            validationError = "Neplatná celková suma (zadajte kladné číslo, napr. 45,90)."
+                            return@Button
+                        }
+                        val totalCents = SlovakFinanceUtils.bigDecimalToCents(parsedAmount)
+
+                        val parsedRate = SlovakFinanceUtils.parseSlovakDecimal(vatRateStr)
+                        if (parsedRate == null || parsedRate < BigDecimal.ZERO || parsedRate > BigDecimal(100)) {
+                            validationError = "Sadzba DPH musí byť v rozsahu 0 až 100 %."
+                            return@Button
+                        }
+
+                        val vatCents = if (vatAmountStr.isBlank()) {
+                            null
+                        } else {
+                            val parsedVat = SlovakFinanceUtils.parseSlovakDecimal(vatAmountStr)
+                            if (parsedVat == null || parsedVat < BigDecimal.ZERO) {
+                                validationError = "Neplatný formát sumy DPH."
+                                return@Button
+                            }
+                            val vc = SlovakFinanceUtils.bigDecimalToCents(parsedVat)
+                            if (vc > totalCents) {
+                                validationError = "Suma DPH nemôže byť vyššia než celková suma s DPH."
+                                return@Button
+                            }
+                            vc
+                        }
+
+                        val normalizedIssue = SlovakFinanceUtils.normalizeIsoDate(issueDate)
+                        if (normalizedIssue == null) {
+                            validationError = "Neplatný dátum vystavenia (použite RRRR-MM-DD alebo DD.MM.RRRR)."
+                            return@Button
+                        }
+
+                        val normalizedDue = if (dueDate.isBlank()) {
+                            null
+                        } else {
+                            SlovakFinanceUtils.normalizeIsoDate(dueDate) ?: run {
+                                validationError = "Neplatný dátum splatnosti (použite RRRR-MM-DD alebo DD.MM.RRRR)."
+                                return@Button
+                            }
+                        }
 
                         onConfirm(
                             Invoice(
-                                supplierName = supplierName,
-                                ico = ico.ifBlank { null },
-                                dic = dic.ifBlank { null },
-                                totalAmount = amount,
-                                vatRate = vRate,
-                                vatAmount = vAmount,
-                                issueDate = issueDate,
+                                supplierName = trimmedSupplier,
+                                ico = ico.trim().ifBlank { null },
+                                dic = dic.trim().ifBlank { null },
+                                totalAmount = SlovakFinanceUtils.centsToDouble(totalCents),
+                                totalAmountCents = totalCents,
+                                vatRate = parsedRate.toDouble(),
+                                vatAmount = vatCents?.let { SlovakFinanceUtils.centsToDouble(it) },
+                                vatAmountCents = vatCents,
+                                issueDate = normalizedIssue,
+                                dueDate = normalizedDue,
+                                isPaid = isPaid,
+                                currency = "EUR",
                                 category = category,
-                                description = description.ifBlank { null }
+                                description = description.trim().ifBlank { null }
                             )
                         )
                     },
+                    enabled = !isSaving,
                     modifier = Modifier.weight(1.3f).height(52.dp).testTag("confirm_scanned_button"),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -936,28 +1228,33 @@ fun ReviewScannedInvoiceForm(
                     ),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Text("Potvrdiť a uložiť", fontWeight = FontWeight.Bold)
+                    if (isSaving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Potvrdiť a uložiť", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
     }
 }
 
-// --- Helper: Programmatically generate a realistic Slovak Tesco receipt on a Bitmap ---
 fun generateSampleReceiptBitmap(): Bitmap {
     val bitmap = Bitmap.createBitmap(400, 560, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-    
-    // Background - crumpled off-white receipt paper
     canvas.drawColor(android.graphics.Color.parseColor("#FAF9F6"))
-    
+
     val paint = Paint().apply {
         isAntiAlias = true
         color = android.graphics.Color.DKGRAY
         textSize = 14f
         typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.NORMAL)
     }
-    
+
     val titlePaint = Paint().apply {
         isAntiAlias = true
         color = android.graphics.Color.BLACK
@@ -974,7 +1271,6 @@ fun generateSampleReceiptBitmap(): Bitmap {
         textAlign = Paint.Align.CENTER
     }
 
-    // Top Receipt Margin
     var y = 40f
     canvas.drawText("TESCO STORES SR, a.s.", 200f, y, titlePaint)
     y += 24f
@@ -982,12 +1278,11 @@ fun generateSampleReceiptBitmap(): Bitmap {
     y += 18f
     canvas.drawText("IČO: 31321828  IČ DPH: SK2020300125", 200f, y, subtitlePaint)
     y += 25f
-    
+
     paint.strokeWidth = 2f
-    canvas.drawLine(30f, y, 370f, y, paint) // separator
+    canvas.drawLine(30f, y, 370f, y, paint)
     y += 25f
-    
-    // Receipt Items
+
     paint.textSize = 13f
     canvas.drawText("Kancelársky papier A4 (Reflex)  1 ks", 30f, y, paint)
     canvas.drawText("5.90 A", 300f, y, paint)
@@ -1005,19 +1300,17 @@ fun generateSampleReceiptBitmap(): Bitmap {
     canvas.drawLine(30f, y, 370f, y, paint)
     y += 30f
 
-    // Total DPH Section
     val boldTotalPaint = Paint().apply {
         isAntiAlias = true
         color = android.graphics.Color.BLACK
         textSize = 18f
         typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
     }
-    
+
     canvas.drawText("CELKOM K ÚHRADE:", 30f, y, boldTotalPaint)
     canvas.drawText("45.90 EUR", 270f, y, boldTotalPaint)
     y += 26f
-    
-    // Tax breakdown
+
     paint.textSize = 12f
     canvas.drawText("Sadzba DPH       Bez DPH      DPH      S DPH", 30f, y, paint)
     y += 18f
@@ -1029,41 +1322,12 @@ fun generateSampleReceiptBitmap(): Bitmap {
     canvas.drawLine(30f, y, 370f, y, paint)
     y += 25f
 
-    // Date & Time details
-    val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
     canvas.drawText("Dátum vystavenia: $date", 30f, y, paint)
     y += 18f
     canvas.drawText("DKP: 6012020300125010   Číslo dokladu: 4529", 30f, y, paint)
     y += 32f
-    
-    canvas.drawText("ĎAKUJEME ZA NÁKUP!", 200f, y, subtitlePaint)
-    
-    return bitmap
-}
 
-fun getFileInfo(context: android.content.Context, uri: Uri): Pair<String, String> {
-    var name = "doklad_snímka.jpg"
-    var sizeStr = ""
-    try {
-        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-            val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
-            if (cursor.moveToFirst()) {
-                if (nameIndex != -1) {
-                    name = cursor.getString(nameIndex) ?: "doklad_snímka.jpg"
-                }
-                if (sizeIndex != -1) {
-                    val size = cursor.getLong(sizeIndex)
-                    sizeStr = if (size > 1024 * 1024) {
-                        String.format(Locale.US, "%.2f MB", size.toDouble() / (1024 * 1024))
-                    } else {
-                        String.format(Locale.US, "%.1f KB", size.toDouble() / 1024)
-                    }
-                }
-            }
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-    return Pair(name, sizeStr)
+    canvas.drawText("ĎAKUJEME ZA NÁKUP!", 200f, y, subtitlePaint)
+    return bitmap
 }

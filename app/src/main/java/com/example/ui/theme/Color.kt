@@ -2,23 +2,44 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
-
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
-
-// Bento Grid Design Theme Colors
+// Light Bento Palette
 val BentoBg = Color(0xFFFDF8FF)
 val BentoText = Color(0xFF1D1B20)
 val BentoPrimary = Color(0xFF6750A4)
+val BentoPrimaryContainer = Color(0xFFEADDFF)
 val BentoPrimaryDark = Color(0xFF21005D)
 val BentoSecondary = Color(0xFFD0BCFF)
+val BentoSecondaryContainer = Color(0xFFF3EDFF)
 val BentoTertiary = Color(0xFFFFD8E4)
 val BentoTertiaryDark = Color(0xFF31111D)
 val BentoBorder = Color(0xFFCAC4D0)
 val BentoSurface = Color(0xFFFFFFFF)
 val BentoSurfaceVariant = Color(0xFFF3EDFF)
 val BentoOnSurfaceVariant = Color(0xFF49454F)
+val BentoError = Color(0xFFBA1A1A)
+val BentoErrorContainer = Color(0xFFFFDAD6)
+val BentoOnErrorContainer = Color(0xFF410002)
+
+// Dark Bento Palette
+val BentoDarkBg = Color(0xFF141218)
+val BentoDarkSurface = Color(0xFF1D1B20)
+val BentoDarkSurfaceVariant = Color(0xFF2B2930)
+val BentoDarkText = Color(0xFFE6E0E9)
+val BentoDarkOnSurfaceVariant = Color(0xFFCAC4D0)
+val BentoDarkPrimary = Color(0xFFD0BCFF)
+val BentoDarkOnPrimary = Color(0xFF381E72)
+val BentoDarkPrimaryContainer = Color(0xFF4F378B)
+val BentoDarkOnPrimaryContainer = Color(0xFFEADDFF)
+val BentoDarkSecondary = Color(0xFFCCC2DC)
+val BentoDarkOnSecondary = Color(0xFF332D41)
+val BentoDarkSecondaryContainer = Color(0xFF4A4458)
+val BentoDarkOnSecondaryContainer = Color(0xFFE8DEF8)
+val BentoDarkTertiary = Color(0xFFEFB8C8)
+val BentoDarkOnTertiary = Color(0xFF492532)
+val BentoDarkTertiaryContainer = Color(0xFF633B48)
+val BentoDarkOnTertiaryContainer = Color(0xFFFFD8E4)
+val BentoDarkBorder = Color(0xFF49454F)
+val BentoDarkError = Color(0xFFFFB4AB)
+val BentoDarkOnError = Color(0xFF690005)
+val BentoDarkErrorContainer = Color(0xFF93000A)
+val BentoDarkOnErrorContainer = Color(0xFFFFDAD6)

@@ -1,21 +1,19 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# R8 / ProGuard rules for Bleskova Faktura
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Keep Firebase / Firestore / Auth / AI Logic models & callbacks
+-keepattributes Signature,InnerClasses,EnclosingMethod
+-keepattributes SourceFile,LineNumberTable
+-keepclassmembers class com.example.data.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Google Play Billing Library
+-keep class com.android.billingclient.api.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Credential Manager & Google Identity
+-keep class androidx.credentials.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }
+
+# Strip verbose debug logging in release builds
+-assumenosideeffects class android.util.Log {
+    public static int d(...);
+    public static int v(...);
+}

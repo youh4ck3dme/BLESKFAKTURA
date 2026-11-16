@@ -35,6 +35,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
 import com.example.BuildConfig
 import com.example.R
 import com.example.ui.InvoiceViewModel
@@ -259,6 +260,14 @@ fun LoginScreen(
                                     } catch (e: GetCredentialCancellationException) {
                                         Log.w("Auth", "Google Sign-In cancelled or dismissed: ${e.message}", e)
                                         isLoggingIn = false
+                                    } catch (e: NoCredentialException) {
+                                        Log.w("Auth", "No Google credentials found on device: ${e.message}", e)
+                                        Toast.makeText(
+                                            context,
+                                            "V zariadení nie je pridaný žiadny Google účet. Pridajte ho prosím v Nastaveniach.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                        isLoggingIn = false
                                     } catch (e: Exception) {
                                         Log.e("Auth", "Google Sign-In failed", e)
                                         Toast.makeText(context, "Prihlásenie cez Google zlyhalo: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
@@ -382,7 +391,7 @@ fun LoginScreen(
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = "Info",
-                            tint = if (viewModel.isFirebaseMode) MaterialTheme.colorScheme.primary else Color(0xFFF59E0B),
+                            tint = if (viewModel.isFirebaseMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(20.dp)
                         )
                         Column {

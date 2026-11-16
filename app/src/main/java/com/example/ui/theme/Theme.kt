@@ -12,60 +12,74 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme =
-  darkColorScheme(
-    primary = BentoPrimary,
-    onPrimary = Color.White,
-    primaryContainer = BentoPrimaryDark,
-    onPrimaryContainer = BentoSecondary,
-    secondary = BentoSecondary,
-    onSecondary = BentoPrimaryDark,
-    tertiary = BentoTertiary,
-    onTertiary = BentoTertiaryDark,
-    background = BentoBg,
-    onBackground = BentoText,
-    surface = BentoSurface,
-    onSurface = BentoText,
-    surfaceVariant = BentoSurfaceVariant,
-    onSurfaceVariant = BentoOnSurfaceVariant,
-    outline = BentoBorder
-  )
+    darkColorScheme(
+        primary = BentoDarkPrimary,
+        onPrimary = BentoDarkOnPrimary,
+        primaryContainer = BentoDarkPrimaryContainer,
+        onPrimaryContainer = BentoDarkOnPrimaryContainer,
+        secondary = BentoDarkSecondary,
+        onSecondary = BentoDarkOnSecondary,
+        secondaryContainer = BentoDarkSecondaryContainer,
+        onSecondaryContainer = BentoDarkOnSecondaryContainer,
+        tertiary = BentoDarkTertiary,
+        onTertiary = BentoDarkOnTertiary,
+        tertiaryContainer = BentoDarkTertiaryContainer,
+        onTertiaryContainer = BentoDarkOnTertiaryContainer,
+        background = BentoDarkBg,
+        onBackground = BentoDarkText,
+        surface = BentoDarkSurface,
+        onSurface = BentoDarkText,
+        surfaceVariant = BentoDarkSurfaceVariant,
+        onSurfaceVariant = BentoDarkOnSurfaceVariant,
+        outline = BentoDarkBorder,
+        error = BentoDarkError,
+        onError = BentoDarkOnError,
+        errorContainer = BentoDarkErrorContainer,
+        onErrorContainer = BentoDarkOnErrorContainer
+    )
 
 private val LightColorScheme =
-  lightColorScheme(
-    primary = BentoPrimary,
-    onPrimary = Color.White,
-    primaryContainer = BentoPrimaryDark,
-    onPrimaryContainer = BentoSecondary,
-    secondary = BentoSecondary,
-    onSecondary = BentoPrimaryDark,
-    tertiary = BentoTertiary,
-    onTertiary = BentoTertiaryDark,
-    background = BentoBg,
-    onBackground = BentoText,
-    surface = BentoSurface,
-    onSurface = BentoText,
-    surfaceVariant = BentoSurfaceVariant,
-    onSurfaceVariant = BentoOnSurfaceVariant,
-    outline = BentoBorder
-  )
+    lightColorScheme(
+        primary = BentoPrimary,
+        onPrimary = Color.White,
+        primaryContainer = BentoPrimaryContainer,
+        onPrimaryContainer = BentoPrimaryDark,
+        secondary = BentoSecondary,
+        onSecondary = BentoPrimaryDark,
+        secondaryContainer = BentoSecondaryContainer,
+        onSecondaryContainer = BentoPrimaryDark,
+        tertiary = BentoTertiary,
+        onTertiary = BentoTertiaryDark,
+        tertiaryContainer = BentoTertiary,
+        onTertiaryContainer = BentoTertiaryDark,
+        background = BentoBg,
+        onBackground = BentoText,
+        surface = BentoSurface,
+        onSurface = BentoText,
+        surfaceVariant = BentoSurfaceVariant,
+        onSurfaceVariant = BentoOnSurfaceVariant,
+        outline = BentoBorder,
+        error = BentoError,
+        onError = Color.White,
+        errorContainer = BentoErrorContainer,
+        onErrorContainer = BentoOnErrorContainer
+    )
 
 @Composable
 fun MyApplicationTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  // Dynamic color is available on Android 12+
-  dynamicColor: Boolean = false,
-  content: @Composable () -> Unit,
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = false,
+    content: @Composable () -> Unit,
 ) {
-  val colorScheme =
-    when {
-      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        val context = LocalContext.current
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-      }
+    val colorScheme =
+        when {
+            dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                val context = LocalContext.current
+                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            }
+            darkTheme -> DarkColorScheme
+            else -> LightColorScheme
+        }
 
-      darkTheme -> DarkColorScheme
-      else -> LightColorScheme
-    }
-
-  MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+    MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }

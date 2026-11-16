@@ -1,0 +1,145 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDateString(d) {
+      return d is string && d.size() >= 8 && d.size() <= 16;
+    }
+
+    function isValidCategory(c) {
+      return c in ['Kancelária', 'Cestovné', 'Služby', 'Technika', 'Strava', 'Iné'];
+    }
+
+    function isValidUserStats(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.credits is int && data.credits >= 0 && data.credits <= 1000000 &&
+             data.isSubscribed is bool &&
+             data.totalInvoiced is number && data.totalInvoiced >= 0 && data.totalInvoiced <= 100000000 &&
+             data.totalInvoicedCents is int && data.totalInvoicedCents >= 0 && data.totalInvoicedCents <= 10000000000 &&
+             data.invoiceCount is int && data.invoiceCount >= 0 && data.invoiceCount <= 1000000 &&
+             (!('activeReservationId' in data) || data.activeReservationId == null || isValidId(data.activeReservationId));
+    }
+
+    function isValidInvoice(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.supplierName is string && data.supplierName.size() >= 1 && data.supplierName.size() <= 200 &&
+             (!('ico' in data) || data.ico == null || (data.ico is string && data.ico.size() <= 32)) &&
+             (!('dic' in data) || data.dic == null || (data.dic is string && data.dic.size() <= 32)) &&
+             isValidDateString(data.issueDate) &&
+             (!('dueDate' in data) || data.dueDate == null || isValidDateString(data.dueDate)) &&
+             data.isPaid is bool &&
+             data.currency is string && data.currency.size() == 3 &&
+             data.totalAmount is number && data.totalAmount > 0 && data.totalAmount <= 1000000 &&
+             data.totalAmountCents is int && data.totalAmountCents > 0 && data.totalAmountCents <= 100000000 &&
+             (!('vatAmount' in data) || data.vatAmount == null || (data.vatAmount is number && data.vatAmount >= 0 && data.vatAmount <= data.totalAmount)) &&
+             (!('vatAmountCents' in data) || data.vatAmountCents == null || (data.vatAmountCents is int && data.vatAmountCents >= 0 && data.vatAmountCents <= data.totalAmountCents)) &&
+             (!('vatRate' in data) || data.vatRate == null || (data.vatRate is number && data.vatRate >= 0 && data.vatRate <= 100)) &&
+             isValidCategory(data.category) &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 500));
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'credits', 'isSubscribed', 'totalInvoiced', 'totalInvoicedCents', 'invoiceCount', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'credits', 'isSubscribed', 'totalInvoiced', 'totalInvoicedCents', 'invoiceCount', 'activeReservationId', 'createdAt', 'updatedAt']) &&
+                       incoming().credits == 10 &&
+                       incoming().isSubscribed == false &&
+                       incoming().totalInvoiced == 0 &&
+                       incoming().totalInvoicedCents == 0 &&
+                       incoming().invoiceCount == 0 &&
+                       (!('activeReservationId' in incoming()) || incoming().activeReservationId == null) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       (!('updatedAt' in incoming()) || (incoming().updatedAt is timestamp && incoming().updatedAt <= request.time)) &&
+                       isValidUserStats(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserStats(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().isSubscribed == existing().isSubscribed &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       (
+                         // Action 1: Update aggregate invoice totals only
+                         incoming().diff(existing()).affectedKeys().hasOnly(['totalInvoiced', 'totalInvoicedCents', 'invoiceCount', 'updatedAt']) ||
+                         // Action 2: Reserve 1 credit for active scan
+                         (
+                           (!('activeReservationId' in existing()) || existing().activeReservationId == null) &&
+                           incoming().activeReservationId is string && isValidId(incoming().activeReservationId) &&
+                           incoming().credits == existing().credits - 1 &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['credits', 'activeReservationId', 'updatedAt'])
+                         ) ||
+                         // Action 3: Commit active scan reservation without altering credits
+                         (
+                           ('activeReservationId' in existing()) && existing().activeReservationId != null &&
+                           incoming().activeReservationId == null &&
+                           incoming().credits == existing().credits &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['activeReservationId', 'updatedAt'])
+                         ) ||
+                         // Action 4: Rollback active scan reservation (+1 credit once)
+                         (
+                           ('activeReservationId' in existing()) && existing().activeReservationId != null &&
+                           incoming().activeReservationId == null &&
+                           incoming().credits == existing().credits + 1 &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['credits', 'activeReservationId', 'updatedAt'])
+                         )
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /invoices/{invoiceId} {
+        allow get, delete: if isOwner(userId) && isValidId(invoiceId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(invoiceId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'supplierName', 'issueDate', 'isPaid', 'currency', 'totalAmount', 'totalAmountCents', 'category', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'supplierName', 'ico', 'dic', 'issueDate', 'dueDate', 'isPaid', 'currency', 'totalAmount', 'totalAmountCents', 'vatAmount', 'vatAmountCents', 'vatRate', 'category', 'description', 'createdAt', 'updatedAt']) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidInvoice(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(invoiceId) &&
+                         isValidInvoice(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'supplierName', 'ico', 'dic', 'issueDate', 'dueDate', 'isPaid',
+                           'currency', 'totalAmount', 'totalAmountCents', 'vatAmount', 'vatAmountCents',
+                           'vatRate', 'category', 'description', 'updatedAt'
+                         ]);
+      }
+    }
+  }
+}
