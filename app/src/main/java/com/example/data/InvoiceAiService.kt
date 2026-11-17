@@ -5,13 +5,15 @@ import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
+import com.google.firebase.ai.type.ThinkingLevel
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
+import com.google.firebase.ai.type.thinkingConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 data class ExtractedInvoiceJson(
@@ -35,7 +37,7 @@ sealed interface AiExtractionResult {
 
 object InvoiceAiService {
     private const val TAG = "InvoiceAiService"
-    private const val MODEL_NAME = "gemini-3.8-flash"
+    private const val MODEL_NAME = "gemini-3.5-flash-lite"
     private const val AI_TIMEOUT_MS = 60_000L
     private const val MAX_AI_IMAGE_DIMENSION = 1600
 
@@ -94,14 +96,31 @@ object InvoiceAiService {
         Firebase.ai.generativeModel(
             modelName = MODEL_NAME,
             generationConfig = generationConfig {
-                temperature = 0.1f
                 responseMimeType = "application/json"
                 responseSchema = invoiceSchema
+                maxOutputTokens = 4096
+                thinkingConfig = thinkingConfig {
+                    thinkingLevel = ThinkingLevel.MINIMAL
+                }
             }
         )
     }
 
-    suspend fun extractInvoiceData(bitmap: Bitmap): AiExtractionResult = withContext(Dispatchers.IO) {
+    suspend fun extractInvoiceData(bitmap: Bitmap): AiExtractionResult =
+        extractInvoiceData(bitmap, Dispatchers.IO) { scaledBitmap, promptText ->
+            model.generateContent(
+                content {
+                    image(scaledBitmap)
+                    text(promptText)
+                }
+            ).text
+        }
+
+    internal suspend fun extractInvoiceData(
+        bitmap: Bitmap,
+        dispatcher: CoroutineDispatcher,
+        request: suspend (Bitmap, String) -> String?
+    ): AiExtractionResult = withContext(dispatcher) {
         val scaledBitmap = scaleBitmapForAi(bitmap)
         val promptText = """
             Si presný audítor slovenského účtovníctva pre živnostníkov (SZČO).
@@ -120,31 +139,27 @@ object InvoiceAiService {
         """.trimIndent()
 
         try {
-            val response = withTimeout(AI_TIMEOUT_MS) {
-                model.generateContent(
-                    content {
-                        image(scaledBitmap)
-                        text(promptText)
-                    }
-                )
+            // A local deadline returns null; cancellation by the caller still propagates.
+            withTimeoutOrNull(AI_TIMEOUT_MS) {
+                val rawJson = request(scaledBitmap, promptText)
+                if (rawJson.isNullOrBlank()) {
+                    AiExtractionResult.InvalidDocument(
+                        "AI nevrátila žiadne údaje z dokladu. Skúste odfotiť doklad znova."
+                    )
+                } else {
+                    parseAndValidateJson(rawJson)
+                }
+            } ?: run {
+                Log.e(TAG, "AI invoice extraction timed out")
+                AiExtractionResult.Timeout
             }
-            val rawJson = response.text
-            if (rawJson.isNullOrBlank()) {
-                return@withContext AiExtractionResult.InvalidDocument(
-                    "AI nevrátila žiadne údaje z dokladu. Skúste odfotiť doklad znova."
-                )
-            }
-            parseAndValidateJson(rawJson)
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "AI invoice extraction timed out", e)
-            AiExtractionResult.Timeout
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            // Log error type only; never log receipt contents or auth payloads.
-            Log.e(TAG, "AI invoice extraction failed: ${e.javaClass.simpleName}", e)
+        } catch (_: Exception) {
+            // SDK exceptions can contain HTTP bodies, credentials and receipt contents.
+            Log.e(TAG, "AI invoice extraction failed")
             AiExtractionResult.ServiceError(
-                "AI analýza sa nepodarila (${e.localizedMessage ?: "chyba služby"}). Skúste to znova."
+                "AI analýza sa nepodarila. Skúste to znova."
             )
         } finally {
             if (scaledBitmap !== bitmap && !scaledBitmap.isRecycled) {
@@ -233,8 +248,8 @@ object InvoiceAiService {
                     description = description
                 )
             )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse structured AI JSON: ${e.javaClass.simpleName}")
+        } catch (_: Exception) {
+            Log.e(TAG, "Failed to parse structured AI JSON")
             AiExtractionResult.InvalidDocument(
                 "Odpoveď AI nemá platný formát dokladu. Skúste prosím skenovať znova."
             )
