@@ -18,6 +18,7 @@ import com.example.data.InvoiceRepository
 import com.example.data.PlayBillingManager
 import com.example.data.PlayBillingUiState
 import com.example.data.ReceiptImageProcessor
+import com.example.data.SlovakFinanceUtils
 import com.example.data.UserInfo
 import com.example.data.UserStats
 import kotlinx.coroutines.CancellationException
@@ -30,11 +31,60 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+data class DashboardSummaryUiState(
+    val recentInvoices: List<Invoice> = emptyList(),
+    val recentTotalCents: Long = 0L,
+    val unpaidCount: Int = 0,
+    val unpaidTotalCents: Long = 0L,
+    val overdueCount: Int = 0,
+    val pendingPurchaseCount: Int = 0,
+    val totalPendingCount: Int = 0
+)
+
+internal fun computeDashboardSummary(
+    invoices: List<Invoice>,
+    pendingPurchaseCount: Int,
+    todayUtcMillis: Long = SlovakFinanceUtils.todayUtcMidnightMillis()
+): DashboardSummaryUiState {
+    val recentInvoices = invoices
+        .sortedWith(
+            compareByDescending<Invoice> {
+                SlovakFinanceUtils.normalizeIsoDate(it.issueDate) ?: ""
+            }.thenByDescending { it.createdAt }
+        )
+        .take(3)
+    val recentTotalCents = recentInvoices.sumOf { it.effectiveTotalCents() }
+
+    val unpaidInvoices = invoices.filter { !it.isPaid }
+    val unpaidTotalCents = unpaidInvoices.sumOf { it.effectiveTotalCents() }
+    val overdueCount = unpaidInvoices.count { invoice ->
+        val dueRaw = invoice.dueDate
+        if (dueRaw.isNullOrBlank()) {
+            false
+        } else {
+            val dueMillis = SlovakFinanceUtils.parseDateUtcMidnightMillis(dueRaw)
+            dueMillis != null && SlovakFinanceUtils.calendarDaysBetweenUtc(todayUtcMillis, dueMillis) < 0
+        }
+    }
+    val safePendingPurchases = pendingPurchaseCount.coerceAtLeast(0)
+
+    return DashboardSummaryUiState(
+        recentInvoices = recentInvoices,
+        recentTotalCents = recentTotalCents,
+        unpaidCount = unpaidInvoices.size,
+        unpaidTotalCents = unpaidTotalCents,
+        overdueCount = overdueCount,
+        pendingPurchaseCount = safePendingPurchases,
+        totalPendingCount = unpaidInvoices.size + safePendingPurchases
+    )
+}
 
 sealed interface ScanUiState {
     data object Idle : ScanUiState
@@ -53,6 +103,7 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
 
     val billingState: StateFlow<PlayBillingUiState> = playBillingManager.billingState
     val catalogPrices: StateFlow<Map<String, String>> = playBillingManager.catalogPrices
+    val pendingUnverifiedPurchaseCount: StateFlow<Int> = playBillingManager.pendingUnverifiedCount
 
     val invoices: StateFlow<List<Invoice>> = currentUser
         .flatMapLatest { user ->
@@ -67,6 +118,20 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
+
+    val dashboardSummary: StateFlow<DashboardSummaryUiState> = combine(
+        invoices,
+        pendingUnverifiedPurchaseCount
+    ) { invoiceList, pendingPurchases ->
+        computeDashboardSummary(
+            invoices = invoiceList,
+            pendingPurchaseCount = pendingPurchases
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = DashboardSummaryUiState()
+    )
 
     val userStats: StateFlow<UserStats> = currentUser
         .flatMapLatest { user ->

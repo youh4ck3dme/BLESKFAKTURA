@@ -124,6 +124,7 @@ class PlayBillingManagerTest {
 
         assertEquals(0, calls)
         assertTrue(manager.billingState.value is PlayBillingUiState.Info)
+        assertEquals(1, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -148,6 +149,7 @@ class PlayBillingManagerTest {
 
         assertEquals(0, calls)
         assertEquals(PlayBillingUiState.Idle, manager.billingState.value)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -173,6 +175,7 @@ class PlayBillingManagerTest {
         val state = manager.billingState.value
         assertTrue(state is PlayBillingUiState.Error)
         assertTrue((state as PlayBillingUiState.Error).message.contains("inému účtu"))
+        assertEquals(1, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -212,12 +215,14 @@ class PlayBillingManagerTest {
         val idemState = manager.billingState.value as PlayBillingUiState.Verified
         assertTrue(idemState.idempotent)
         assertEquals(0, idemState.creditsGranted)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
 
         mode = "SUBSCRIPTION_ACTIVE"
         manager.handleSinglePurchase("blesk_premium_monthly", "tok_sub_active_123456", Purchase.PurchaseState.PURCHASED)
         val subState = manager.billingState.value as PlayBillingUiState.Verified
         assertTrue(subState.isSubscribed)
         assertEquals("blesk_premium_monthly", subState.productId)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -253,10 +258,12 @@ class PlayBillingManagerTest {
         testScheduler.advanceUntilIdle()
         assertEquals(1, invocationCount)
         assertTrue(manager.billingState.value is PlayBillingUiState.PendingVerification)
+        assertEquals(1, manager.pendingUnverifiedCount.value)
 
         gate.complete(Unit)
         listOf(job1, job2).awaitAll()
         assertEquals(1, invocationCount)
         assertTrue(manager.billingState.value is PlayBillingUiState.Verified)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
     }
 }

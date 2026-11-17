@@ -91,15 +91,18 @@ import java.util.Calendar
 fun FilterChipCustom(
     selected: Boolean,
     onClick: () -> Unit,
-    label: String
+    label: String,
+    testTagOverride: String? = null
 ) {
     Box(
+        contentAlignment = Alignment.Center,
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(20.dp))
             .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .testTag("filter_chip_$label")
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .testTag(testTagOverride ?: "filter_chip_$label")
     ) {
         Text(
             text = label,
