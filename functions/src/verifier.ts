@@ -48,6 +48,7 @@ export interface VerifyPurchaseInput {
 }
 
 export interface InAppPlayPurchase {
+  obfuscatedExternalAccountId?: string;
   purchaseState: number; // 0 = Purchased, 1 = Canceled, 2 = Pending
   acknowledgementState: number; // 0 = Yet to be acknowledged, 1 = Acknowledged
   consumptionState?: number; // 0 = Yet to be consumed, 1 = Consumed
@@ -55,6 +56,7 @@ export interface InAppPlayPurchase {
 }
 
 export interface SubscriptionPlayPurchase {
+  obfuscatedExternalAccountId?: string;
   subscriptionState: string;
   acknowledgementState?: string;
   latestOrderId?: string;
@@ -125,7 +127,7 @@ export function validateVerifyInput(input: VerifyPurchaseInput): CatalogProductS
       `Package mismatch: expected ${EXPECTED_PACKAGE_NAME}.`
     );
   }
-  const spec = PRODUCT_CATALOG[input.productId];
+  const spec = Object.hasOwn(PRODUCT_CATALOG, input.productId) ? PRODUCT_CATALOG[input.productId] : undefined;
   if (!spec) {
     throw new VerificationError("invalid-argument", `Unknown productId: ${input.productId}.`);
   }
@@ -141,12 +143,29 @@ const IMMEDIATE_ACTIVE_SUBSCRIPTION_STATES = new Set([
   "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
 ]);
 
+export function obfuscatePlayAccountId(uid: string): string {
+  return createHash("sha256").update(`blesk-play-account-v1:${uid}`, "utf8").digest("hex");
+}
+
+function requirePlayOwner(uid: string, accountId: string | undefined): void {
+  // The mapping must come from Play's API, never from the callable request.
+  if (!accountId || accountId !== obfuscatePlayAccountId(uid)) {
+    throw new VerificationError("permission-denied", "Google Play purchase account does not match the authenticated user.");
+  }
+}
+
+function requireTokenIdentity(record: TokenRecord, input: VerifyPurchaseInput): void {
+  if (record.ownerUid !== input.uid || record.packageName !== input.packageName || record.productId !== input.productId) {
+    throw new VerificationError("permission-denied", "Purchase token identity mismatch.");
+  }
+}
+
 export function isSubscriptionEntitled(
   sub: SubscriptionPlayPurchase,
   nowMs: number = Date.now()
 ): boolean {
   if (IMMEDIATE_ACTIVE_SUBSCRIPTION_STATES.has(sub.subscriptionState)) {
-    return true;
+    return typeof sub.expiryTimeMillis === "number" && sub.expiryTimeMillis > nowMs;
   }
   // Canceled auto-renew retains access until expiryTimeMillis if expiry is still in the future.
   if (
@@ -182,10 +201,12 @@ export async function verifyAndGrantPlayPurchase(
         `Purchase is canceled or incomplete (purchaseState=${playPurchase.purchaseState}).`
       );
     }
+    requirePlayOwner(input.uid, playPurchase.obfuscatedExternalAccountId);
 
     const txResult = await store.runInTransaction<VerifyPurchaseResult>(async (tx) => {
       const existing = await tx.getToken(tokenHash);
       if (existing) {
+        requireTokenIdentity(existing, input);
         if (existing.ownerUid !== input.uid) {
           throw new VerificationError(
             "permission-denied",
@@ -204,6 +225,10 @@ export async function verifyAndGrantPlayPurchase(
             isSubscribed: false,
           };
         }
+      }
+
+      if (playPurchase.consumptionState === 1) {
+        throw new VerificationError("failed-precondition", "Consumed purchase has no existing entitlement record.");
       }
 
       // Order invariant: commit Firestore entitlement + tokenHash BEFORE Play consume
@@ -239,7 +264,8 @@ export async function verifyAndGrantPlayPurchase(
 
   // Subscription verification (SUBS) via Play subscriptionsv2.get
   const sub = await playClient.getSubscriptionV2(input.packageName, token);
-  if (sub.productIdFromLineItems && sub.productIdFromLineItems !== spec.productId) {
+  requirePlayOwner(input.uid, sub.obfuscatedExternalAccountId);
+  if (sub.productIdFromLineItems !== spec.productId) {
     throw new VerificationError(
       "invalid-argument",
       `Subscription product mismatch (${sub.productIdFromLineItems}).`
@@ -250,6 +276,7 @@ export async function verifyAndGrantPlayPurchase(
   const subResult = await store.runInTransaction<VerifyPurchaseResult>(async (tx) => {
     const existing = await tx.getToken(tokenHash);
     if (existing) {
+      requireTokenIdentity(existing, input);
       if (existing.ownerUid !== input.uid) {
         throw new VerificationError(
           "permission-denied",
@@ -291,6 +318,7 @@ export async function verifyAndGrantPlayPurchase(
 
 export interface PlayRtdnNotification {
   packageName?: string;
+  testNotification?: { version?: string };
   subscriptionNotification?: {
     notificationType?: number;
     purchaseToken?: string;
@@ -316,6 +344,9 @@ export async function processPlayRtdnNotification(
 ): Promise<{ handled: boolean; action: string }> {
   if (payload.packageName !== EXPECTED_PACKAGE_NAME) {
     return { handled: false, action: "IGNORED_PACKAGE" };
+  }
+  if (payload.testNotification) {
+    return { handled: true, action: "TEST_NOTIFICATION" };
   }
 
   // RTDN is treated strictly as a wake-up signal: always re-verify authoritative state via Play Developer API.

@@ -21,6 +21,14 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PlayBillingManagerTest {
 
+    @Test
+    fun accountId_matchesBackendOwnershipContract() {
+        assertEquals(
+            "61ef41ccb77b7d1a9af28d85bb2a687159ed17ea8050e139b514a2ac127ad01f",
+            playBillingAccountId("alice_uid")
+        )
+    }
+
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     private fun fakePurchase(

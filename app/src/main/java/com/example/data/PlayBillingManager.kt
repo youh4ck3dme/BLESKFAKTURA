@@ -29,6 +29,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.util.Collections
+import java.security.MessageDigest
+
+internal fun playBillingAccountId(uid: String): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest("blesk-play-account-v1:$uid".toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
 enum class BillingProduct(
     val productId: String,
@@ -290,7 +296,13 @@ class PlayBillingManager(
             productParamsBuilder.setOfferToken(offerToken)
         }
 
+        val uid = FirebaseAuth.getInstance().currentUser?.uid
+        if (uid.isNullOrBlank()) {
+            _billingState.value = PlayBillingUiState.Error("Pred nákupom sa prihláste svojím účtom Google.")
+            return
+        }
         val flowParams = BillingFlowParams.newBuilder()
+            .setObfuscatedAccountId(playBillingAccountId(uid))
             .setProductDetailsParamsList(listOf(productParamsBuilder.build()))
             .build()
 

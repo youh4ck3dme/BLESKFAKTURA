@@ -20,6 +20,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import kotlinx.coroutines.runBlocking
+import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE)
@@ -30,6 +32,7 @@ abstract class FirestoreEmulatorTestBase {
     protected lateinit var firestore: FirebaseFirestore
     protected lateinit var auth: FirebaseAuth
     protected lateinit var databaseId: String
+    private var ownedFirebaseApp: FirebaseApp? = null
 
     @Before
     open fun setUpFirebase() {
@@ -41,35 +44,40 @@ abstract class FirestoreEmulatorTestBase {
             "ai-studio-android-bleskovf-056698ab-4e20-4c12-b4ec-52ee9d53a81d"
         }
 
-        val app = if (FirebaseApp.getApps(context).isEmpty()) {
-            val newApp = FirebaseApp.initializeApp(
-                context,
-                FirebaseOptions.Builder()
-                    .setApplicationId("sk.bizagent.bleskovafaktura")
-                    .setProjectId(PROJECT_ID)
-                    .setApiKey("fake-api-key-for-emulator")
-                    .build()
-            )
-            val newFirestore = FirebaseFirestore.getInstance(newApp, databaseId)
-            newFirestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
-            newFirestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
-                .build()
-
-            val newAuth = FirebaseAuth.getInstance(newApp)
-            newAuth.useEmulator(EMULATOR_HOST, AUTH_PORT)
-            newApp
-        } else {
-            FirebaseApp.getInstance()
-        }
-
+        // Never reuse the default app: a developer or CI may have real Firebase resources configured.
+        val app = FirebaseApp.initializeApp(
+            context,
+            FirebaseOptions.Builder()
+                .setApplicationId("sk.bizagent.bleskovafaktura")
+                .setProjectId(PROJECT_ID)
+                .setApiKey("fake-api-key-for-emulator")
+                .build(),
+            "firestore-rules-${UUID.randomUUID()}"
+        )
+        ownedFirebaseApp = app
         firestore = FirebaseFirestore.getInstance(app, databaseId)
+        firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+        firestore.firestoreSettings = FirebaseFirestoreSettings.Builder(firestore.firestoreSettings)
+            .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
+            .build()
         auth = FirebaseAuth.getInstance(app)
+        auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
     }
 
     @After
     open fun tearDownFirebase() {
-        auth.signOut()
+        val app = ownedFirebaseApp ?: return
+        ownedFirebaseApp = null
+        try {
+            if (::auth.isInitialized) auth.signOut()
+            if (::firestore.isInitialized) {
+                runBlocking {
+                    withTimeout(5000L) { firestore.terminate().await() }
+                }
+            }
+        } finally {
+            app.delete()
+        }
     }
 
     protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {
