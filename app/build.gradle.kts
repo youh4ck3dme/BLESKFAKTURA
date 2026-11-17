@@ -32,12 +32,7 @@ android {
       keyAlias = "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
+    // Keep AGP's standard debug signing config and automatic debug keystore.
   }
 
   buildTypes {
@@ -48,7 +43,7 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    debug { signingConfig = signingConfigs.getByName("debug") }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -141,7 +136,11 @@ dependencies {
 
 tasks.withType<Test> {
   failFast = true
-  timeout.set(Duration.ofMinutes(2))
+  maxHeapSize = "768m"
+  maxParallelForks = 1
+  forkEvery = 1
+  // Cold Robolectric SDK downloads and emulator-backed tests need more than two minutes.
+  timeout.set(Duration.ofMinutes(10))
   testLogging {
     events("passed", "failed", "skipped")
   }

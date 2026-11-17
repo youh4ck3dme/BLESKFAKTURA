@@ -1,6 +1,10 @@
 package com.example.data
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import com.example.base.FirestoreEmulatorTestBase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.async
@@ -11,9 +15,15 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
+import org.robolectric.annotation.Config
 import java.util.UUID
 
 class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
@@ -341,5 +351,68 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
     private companion object {
         const val DEFAULT_TIMEOUT_MS = 8000L
         const val FLOW_TIMEOUT_MS = 4000L
+    }
+}
+
+@Config(manifest = Config.NONE, sdk = [34])
+class FirestoreEmulatorIsolationTest : FirestoreEmulatorTestBase() {
+    private lateinit var originalDefaultApp: FirebaseApp
+    private var createdDefaultApp = false
+
+    @Before
+    override fun setUpFirebase() {
+        val appContext = ApplicationProvider.getApplicationContext<Context>()
+        val existingDefault = FirebaseApp.getApps(appContext)
+            .firstOrNull { it.name == FirebaseApp.DEFAULT_APP_NAME }
+        createdDefaultApp = existingDefault == null
+        originalDefaultApp = existingDefault ?: FirebaseApp.initializeApp(
+            appContext,
+            FirebaseOptions.Builder()
+                .setApplicationId("1:1234567890:android:defaultsentinel")
+                .setProjectId("demo-default-sentinel")
+                .setApiKey("fake-default-api-key")
+                .build()
+        )
+        super.setUpFirebase()
+    }
+
+    @Test
+    fun existingDefaultApp_cannotSelectTheProjectOrFirestoreEndpointForTests() {
+        assertNotSame(originalDefaultApp, auth.app)
+        assertSame(auth.app, firestore.app)
+        assertEquals("demo-no-project", auth.app.options.projectId)
+        assertEquals("127.0.0.1:8085", firestore.firestoreSettings.host)
+        assertFalse(firestore.firestoreSettings.isSslEnabled)
+        super.tearDownFirebase()
+        assertSame(originalDefaultApp, FirebaseApp.getInstance())
+    }
+
+    @Test
+    fun repeatedSetupAndTeardown_reusesTheIsolatedClientsWithoutDeletingTheirApp() {
+        val testApp = auth.app
+        val firstAuth = auth
+        val firstFirestore = firestore
+        repeat(3) {
+            super.tearDownFirebase()
+            assertNull(auth.currentUser)
+            assertSame(originalDefaultApp, FirebaseApp.getInstance())
+            super.setUpFirebase()
+            assertSame(testApp, auth.app)
+            assertSame(firstAuth, auth)
+            assertSame(firstFirestore, firestore)
+            assertEquals("demo-no-project", auth.app.options.projectId)
+            assertEquals("127.0.0.1:8085", firestore.firestoreSettings.host)
+            assertFalse(firestore.firestoreSettings.isSslEnabled)
+            assertNotSame(originalDefaultApp, auth.app)
+        }
+    }
+
+    @After
+    override fun tearDownFirebase() {
+        try {
+            super.tearDownFirebase()
+        } finally {
+            if (createdDefaultApp && ::originalDefaultApp.isInitialized) originalDefaultApp.delete()
+        }
     }
 }

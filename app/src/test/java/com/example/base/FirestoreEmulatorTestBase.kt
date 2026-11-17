@@ -41,35 +41,38 @@ abstract class FirestoreEmulatorTestBase {
             "ai-studio-android-bleskovf-056698ab-4e20-4c12-b4ec-52ee9d53a81d"
         }
 
-        val app = if (FirebaseApp.getApps(context).isEmpty()) {
-            val newApp = FirebaseApp.initializeApp(
-                context,
-                FirebaseOptions.Builder()
-                    .setApplicationId("sk.bizagent.bleskovafaktura")
-                    .setProjectId(PROJECT_ID)
-                    .setApiKey("fake-api-key-for-emulator")
-                    .build()
-            )
-            val newFirestore = FirebaseFirestore.getInstance(newApp, databaseId)
-            newFirestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
-            newFirestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
-                .build()
-
-            val newAuth = FirebaseAuth.getInstance(newApp)
-            newAuth.useEmulator(EMULATOR_HOST, AUTH_PORT)
-            newApp
-        } else {
-            FirebaseApp.getInstance()
+        // Never reuse the default app: it may point to a real project.
+        // Auth caches emulator listeners by API key, so keep this app alive until the test JVM exits.
+        // Gradle's forkEvery = 1 isolates test classes in separate JVMs.
+        val existingApp = FirebaseApp.getApps(context).firstOrNull { it.name == APP_NAME }
+        val app = existingApp ?: FirebaseApp.initializeApp(
+            context,
+            FirebaseOptions.Builder()
+                .setApplicationId("sk.bizagent.bleskovafaktura")
+                .setProjectId(PROJECT_ID)
+                .setApiKey(API_KEY)
+                .build(),
+            APP_NAME
+        )
+        check(app.options.projectId == PROJECT_ID && app.options.apiKey == API_KEY) {
+            "The Firebase emulator test app must use isolated demo options."
         }
-
         firestore = FirebaseFirestore.getInstance(app, databaseId)
         auth = FirebaseAuth.getInstance(app)
+        if (existingApp == null) {
+            firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+            firestore.firestoreSettings = FirebaseFirestoreSettings.Builder(firestore.firestoreSettings)
+                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
+                .build()
+            auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
+        }
+        check(firestore.firestoreSettings.host == "$EMULATOR_HOST:$FIRESTORE_PORT" &&
+            !firestore.firestoreSettings.isSslEnabled) { "Firestore tests must use the local emulator." }
     }
 
     @After
     open fun tearDownFirebase() {
-        auth.signOut()
+        if (::auth.isInitialized) auth.signOut()
     }
 
     protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {
@@ -93,6 +96,8 @@ abstract class FirestoreEmulatorTestBase {
     }
 
     private companion object {
+        const val APP_NAME = "firestore-emulator-tests"
+        const val API_KEY = "fake-api-key-for-emulator"
         const val EMULATOR_HOST = "127.0.0.1"
         const val FIRESTORE_PORT = 8085
         const val AUTH_PORT = 9099

@@ -22,9 +22,25 @@ Tento priečinok obsahuje produkčnú **Firebase Cloud Functions v2** implement�
 5. Nainštalujte závislosti a nasaďte:
    ```bash
    cd functions
-   npm install
-   npm run build
-   firebase deploy --only functions --project gen-lang-client-0115180408
+   pnpm install --frozen-lockfile --registry=https://registry.npmjs.org/
+   pnpm test
+   cd ..
+   firebase deploy --only functions:verifyPlayPurchase,functions:handlePlayRtdn --project gen-lang-client-0115180408
    ```
 6. Android klient (`PlayBillingManager`) už volá callable `verifyPlayPurchase` v regióne `europe-west1` pri nákupe aj pri obnove nepotvrdených/nekonzumovaných nákupov z Google Play.
 
+## Väzba účtu a stav vydania (16. 11. 2026)
+
+Klient pri začatí nákupu odosiela `obfuscatedAccountId = SHA-256("blesk-play-account-v1:" + Firebase UID)`.
+Backend porovná identifikátor vrátený priamo Google Play API s prihláseným UID ešte pred prvým pripísaním.
+Nákupy zo starších klientov bez tejto väzby sa automaticky nepriraďujú prvému volajúcemu.
+Neznámy už spotrebovaný token sa odmietne; opakovanie známeho tokenu zostáva idempotentné a opakuje nedokončené consume.
+
+RTDN testovacia správa nemení nároky. Pub/Sub funkcia opakuje zlyhané doručenie (`retry: true`).
+Obe funkcie majú `minInstances: 0`, `maxInstances: 1`, `memory: "256MiB"`, `cpu: "gcf_gen1"` a `concurrency: 1`.
+Úsporná konfigurácia je určená pre malú internú testovaciu záťaž; zlomkové CPU môže predĺžiť cold start.
+Toto je kapacitný limit, nie cenový strop. Nevzťahuje sa na priame AI volania z klienta.
+Testy bežia proti zostavenému JavaScriptu, takže nevyžadujú experimentálne TypeScript stripovanie v Node.
+Používa sa úzky oficiálny klient `@googleapis/androidpublisher` namiesto načítania všetkých Google API.
+
+Aktuálne blokery a živé dôkazy sú v `docs/RELEASE_EXECUTION_STATUS.md`; lokálny úspech testov nedokazuje nasadenie ani uskutočnený testovací nákup.

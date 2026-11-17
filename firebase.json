@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs22",
+    "predeploy": ["pnpm --dir \"$RESOURCE_DIR\" run build"]
+  },
   "firestore": [
     {
       "database": "ai-studio-android-bleskovf-056698ab-4e20-4c12-b4ec-52ee9d53a81d",

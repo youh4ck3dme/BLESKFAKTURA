@@ -1,12 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   EXPECTED_PACKAGE_NAME,
   VerificationError,
   hashPurchaseToken,
   processPlayRtdnNotification,
   verifyAndGrantPlayPurchase,
-} from "../src/verifier.ts";
+} from "../lib/verifier.js";
+
+function accountId(uid) {
+  return createHash("sha256").update(`blesk-play-account-v1:${uid}`, "utf8").digest("hex");
+}
 
 function createInMemoryStore() {
   const tokens = new Map();
@@ -42,7 +47,7 @@ function createInMemoryStore() {
   };
 }
 
-function createFakePlayClient(overrides = {}) {
+function createFakePlayClient(overrides = {}, uid = "user_1") {
   const consumed = [];
   const acknowledged = [];
   return {
@@ -54,6 +59,7 @@ function createFakePlayClient(overrides = {}) {
         acknowledgementState: 0,
         consumptionState: 0,
         orderId: "GPA.1234-5678-9012-34567",
+        obfuscatedExternalAccountId: accountId(uid),
       };
     },
     async consumeProductPurchase(pkg, productId, token) {
@@ -66,6 +72,7 @@ function createFakePlayClient(overrides = {}) {
         latestOrderId: "GPA.9999-0000-1111",
         expiryTimeMillis: Date.now() + 30 * 86400_000,
         productIdFromLineItems: "blesk_premium_monthly",
+        obfuscatedExternalAccountId: accountId(uid),
       };
     },
     async acknowledgeSubscription(pkg, productId, token) {
@@ -108,6 +115,70 @@ test("Rejects packageName mismatch and unknown productId", async () => {
       ),
     (err) => err instanceof VerificationError && err.code === "invalid-argument"
   );
+});
+
+test("First claimant cannot steal another user's Play purchase before token binding", async () => {
+  const store = createInMemoryStore();
+  const client = createFakePlayClient({
+    async getProductPurchase() {
+      return { purchaseState: 0, consumptionState: 0, obfuscatedExternalAccountId: accountId("victim_uid") };
+    },
+  });
+  await assert.rejects(
+    () => verifyAndGrantPlayPurchase({ uid: "attacker_uid", packageName: EXPECTED_PACKAGE_NAME,
+      productId: "blesk_credits_10", purchaseToken: "synthetic_stolen_first_claim" }, client, store),
+    (err) => err instanceof VerificationError && err.code === "permission-denied"
+  );
+  assert.equal(store.tokens.size, 0);
+  assert.equal(store.users.size, 0);
+  assert.equal(client.consumed.length, 0);
+});
+
+test("Unbound or already consumed purchases cannot mint new credits", async () => {
+  for (const purchase of [
+    { purchaseState: 0, consumptionState: 0 },
+    { purchaseState: 0, consumptionState: 1, obfuscatedExternalAccountId: accountId("user_1") },
+  ]) {
+    const store = createInMemoryStore();
+    const client = createFakePlayClient({ async getProductPurchase() { return purchase; } });
+    await assert.rejects(() => verifyAndGrantPlayPurchase({ uid: "user_1", packageName: EXPECTED_PACKAGE_NAME,
+      productId: "blesk_credits_10", purchaseToken: "synthetic_unknown_consumed" }, client, store),
+      (err) => err instanceof VerificationError);
+    assert.equal(store.users.size, 0);
+    assert.equal(store.tokens.size, 0);
+    assert.equal(client.consumed.length, 0);
+  }
+});
+
+test("Subscription ownership and exact product are checked before any grant or acknowledge", async () => {
+  for (const sub of [
+    { obfuscatedExternalAccountId: accountId("victim_uid"), productIdFromLineItems: "blesk_premium_monthly" },
+    { obfuscatedExternalAccountId: accountId("user_1"), productIdFromLineItems: "different_product" },
+    { obfuscatedExternalAccountId: accountId("user_1") },
+  ]) {
+    const store = createInMemoryStore();
+    const client = createFakePlayClient({ async getSubscriptionV2() { return {
+      subscriptionState: "SUBSCRIPTION_STATE_ACTIVE", expiryTimeMillis: Date.now() + 86400_000,
+      acknowledgementState: "ACKNOWLEDGEMENT_STATE_PENDING", ...sub }; } });
+    await assert.rejects(() => verifyAndGrantPlayPurchase({ uid: "user_1", packageName: EXPECTED_PACKAGE_NAME,
+      productId: "blesk_premium_monthly", purchaseToken: "synthetic_bad_subscription" }, client, store),
+      (err) => err instanceof VerificationError);
+    assert.equal(store.users.size, 0);
+    assert.equal(client.acknowledged.length, 0);
+  }
+});
+
+test("RTDN test messages never query Play or write entitlements", async () => {
+  const store = createInMemoryStore();
+  const client = createFakePlayClient({
+    async getProductPurchase() { assert.fail("unexpected Play query"); },
+    async getSubscriptionV2() { assert.fail("unexpected Play query"); },
+  });
+  const result = await processPlayRtdnNotification({ packageName: EXPECTED_PACKAGE_NAME,
+    testNotification: { version: "1.0" } }, client, store);
+  assert.equal(result.action, "TEST_NOTIFICATION");
+  assert.equal(store.users.size, 0);
+  assert.equal(store.tokens.size, 0);
 });
 
 test("Rejects uncompleted INAPP purchaseState (Pending=2 and Canceled=1)", async () => {
@@ -162,6 +233,7 @@ test("Grants INAPP credits once, ensures idempotency on retry, and blocks cross-
         purchaseState: 0,
         acknowledgementState: 0,
         consumptionState: playConsumptionState,
+        obfuscatedExternalAccountId: accountId("alice_uid"),
         orderId: "GPA.1234-5678-9012-34567",
       };
     },
@@ -235,7 +307,7 @@ test("Consumable consume failure recovery: does not double-credit and completes 
       }
       client.consumed.push({ pkg, productId, token });
     },
-  });
+  }, "recover_uid");
   const token = "tok_consume_recover_99999";
 
   await assert.rejects(
@@ -283,8 +355,9 @@ test("INAPP RTDN re-verifies Play Developer API before revoking credits and clam
       return {
         purchaseState: playState,
         acknowledgementState: 0,
-        consumptionState: 1,
+        consumptionState: 0,
         orderId: "GPA.REFUND.1",
+        obfuscatedExternalAccountId: accountId("refund_uid"),
       };
     },
   });
@@ -365,6 +438,7 @@ test("Activates and acknowledges SUBS and revokes via RTDN on cancellation/expir
         subscriptionState: subState,
         acknowledgementState: "ACKNOWLEDGEMENT_STATE_PENDING",
         latestOrderId: "GPA.SUB.001",
+        obfuscatedExternalAccountId: accountId("bob_uid"),
         expiryTimeMillis: expiry,
         productIdFromLineItems: "blesk_premium_monthly",
       };
