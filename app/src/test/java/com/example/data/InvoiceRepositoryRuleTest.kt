@@ -1,5 +1,6 @@
 package com.example.data
 
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.example.base.FirestoreEmulatorTestBase
 import com.google.firebase.FirebaseApp
@@ -14,12 +15,13 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import org.junit.Before
 import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.robolectric.annotation.Config
 import java.util.UUID
@@ -359,7 +361,7 @@ class FirestoreEmulatorIsolationTest : FirestoreEmulatorTestBase() {
 
     @Before
     override fun setUpFirebase() {
-        val appContext = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val appContext = ApplicationProvider.getApplicationContext<Context>()
         val existingDefault = FirebaseApp.getApps(appContext)
             .firstOrNull { it.name == FirebaseApp.DEFAULT_APP_NAME }
         createdDefaultApp = existingDefault == null
@@ -370,7 +372,7 @@ class FirestoreEmulatorIsolationTest : FirestoreEmulatorTestBase() {
                 .setProjectId("demo-default-sentinel")
                 .setApiKey("fake-default-api-key")
                 .build()
-        )!!
+        )
         super.setUpFirebase()
     }
 
@@ -383,6 +385,26 @@ class FirestoreEmulatorIsolationTest : FirestoreEmulatorTestBase() {
         assertFalse(firestore.firestoreSettings.isSslEnabled)
         super.tearDownFirebase()
         assertSame(originalDefaultApp, FirebaseApp.getInstance())
+    }
+
+    @Test
+    fun repeatedSetupAndTeardown_reusesTheIsolatedClientsWithoutDeletingTheirApp() {
+        val testApp = auth.app
+        val firstAuth = auth
+        val firstFirestore = firestore
+        repeat(3) {
+            super.tearDownFirebase()
+            assertNull(auth.currentUser)
+            assertSame(originalDefaultApp, FirebaseApp.getInstance())
+            super.setUpFirebase()
+            assertSame(testApp, auth.app)
+            assertSame(firstAuth, auth)
+            assertSame(firstFirestore, firestore)
+            assertEquals("demo-no-project", auth.app.options.projectId)
+            assertEquals("127.0.0.1:8085", firestore.firestoreSettings.host)
+            assertFalse(firestore.firestoreSettings.isSslEnabled)
+            assertNotSame(originalDefaultApp, auth.app)
+        }
     }
 
     @After
