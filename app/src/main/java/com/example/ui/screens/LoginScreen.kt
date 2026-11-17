@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.app.Activity
+import android.annotation.SuppressLint
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
@@ -206,9 +207,21 @@ fun LoginScreen(
                                 }
 
                                 val webClientId = try {
-                                    context.getString(R.string.default_web_client_id)
+                                    // Both resources are optional; prefer an explicitly configured client ID.
+                                    @SuppressLint("DiscouragedApi")
+                                    val clientIdResources = listOf(
+                                        context.resources.getIdentifier("google_web_client_id", "string", context.packageName),
+                                        context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                                    )
+                                    clientIdResources.firstNotNullOfOrNull { resourceId ->
+                                        if (resourceId == 0) null else context.getString(resourceId)
+                                            .trim().takeIf { it.isNotBlank() }
+                                    }
                                 } catch (e: Exception) {
-                                    Log.e("Auth", "Missing default_web_client_id resource", e)
+                                    Log.e("Auth", "Could not read Google Web Client ID configuration", e)
+                                    null
+                                }
+                                if (webClientId == null) {
                                     Toast.makeText(
                                         context,
                                         "Chýba konfigurácia Google prihlásenia (Web Client ID).",
