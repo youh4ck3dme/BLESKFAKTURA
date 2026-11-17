@@ -3,6 +3,10 @@
 Use Node 22, pnpm 12.15.0, JDK 21 and the checked-in Gradle 9.3.1 wrapper.
 The Android SDK must include `platforms;android-36.1` and `build-tools;36.0.0`.
 Select the SDK through `local.properties` or `ANDROID_HOME`.
+The local helper uses `JAVA_HOME` or the installed `javac` and requires JDK 21+ for
+Android 36 Robolectric tests. Set `ANDROID_USER_HOME` to the directory containing
+the original `debug.keystore` when updating an existing debug installation. The
+helper reuses `$HOME/.android` when that legacy keystore exists.
 
 ```sh
 pnpm --dir functions install --frozen-lockfile --ignore-scripts
@@ -38,3 +42,10 @@ Passing local tests does not establish successful live App Check, Google login,
 AI extraction, or a Play purchase. Verify these using a configured installation.
 Cloud billing remains disabled under the current 0 EUR decision. CI and the
 local verification commands do not deploy Firebase Functions or Firestore rules.
+
+The scanner uses `gemini-3.5-flash-lite` with MINIMAL thinking, a 4096-token output
+limit and a 60-second application deadline. It has no automatic model fallback.
+A live comparison with the same synthetic receipt and schema returned validated
+JSON in 2.03 seconds; `gemini-3.8-flash` returned INTERNAL errors or timed out.
+Debug App Check registration is specific to each installation; CI demo APKs do
+not contain the local Firebase configuration and cannot verify a live scan.
