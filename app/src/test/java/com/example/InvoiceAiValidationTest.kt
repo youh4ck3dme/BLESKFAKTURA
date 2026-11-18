@@ -175,16 +175,19 @@ class InvoiceAiValidationTest {
 
     @Test
     fun zeroOrNegativeAmount_isRejected() {
-        val raw = """
-            {
-              "isAccountingDocument": true,
-              "supplierName": "Tesco Stores SR",
-              "issueDate": "2026-11-16",
-              "totalAmount": 0.0
-            }
-        """.trimIndent()
-        val result = InvoiceAiService.parseAndValidateJson(raw)
-        assertTrue(result is AiExtractionResult.InvalidDocument)
+        for (amount in listOf("0", "-1", "1000001", "null", "\"not-a-number\"")) {
+            val raw = """{"isAccountingDocument":true,"supplierName":"Synthetic merchant","issueDate":"2026-11-18","totalAmount":$amount}"""
+            assertTrue("Must reject invalid amount $amount", InvoiceAiService.parseAndValidateJson(raw) is AiExtractionResult.InvalidDocument)
+        }
+    }
+
+    @Test
+    fun malformedJsonAndDateWithTrailingText_areRejectedWithoutExposingThePayload() {
+        for (raw in listOf("not-json PRIVATE_DOCUMENT_MARKER", """{"supplierName":"Synthetic merchant","issueDate":"2026-11-18 extra","totalAmount":12.30}""")) {
+            val result = InvoiceAiService.parseAndValidateJson(raw)
+            assertTrue(result is AiExtractionResult.InvalidDocument)
+            assertFalse((result as AiExtractionResult.InvalidDocument).message.contains("PRIVATE_DOCUMENT_MARKER"))
+        }
     }
 
     @Test

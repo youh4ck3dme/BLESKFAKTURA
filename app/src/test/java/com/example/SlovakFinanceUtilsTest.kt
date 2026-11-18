@@ -9,6 +9,22 @@ import java.math.BigDecimal
 class SlovakFinanceUtilsTest {
 
     @Test
+    fun normalizeIsoDate_rejectsTrailingTextImpossibleLeapDayAndOutOfRangeYears() {
+        listOf("2026-11-18 extra", "18.11.2026x", "2026/11/18/19", "29.02.2025", "1989-12-31", "2101-01-01")
+            .forEach { assertNull("Must reject the entire invalid input: $it", SlovakFinanceUtils.normalizeIsoDate(it)) }
+        assertEquals("2024-02-29", SlovakFinanceUtils.normalizeIsoDate(" 29.02.2024 "))
+    }
+
+    @Test
+    fun centConversion_roundsHalfCentsAndPreservesNegativeAdjustments() {
+        assertEquals(101L, SlovakFinanceUtils.bigDecimalToCents(BigDecimal("1.005")))
+        assertEquals(-101L, SlovakFinanceUtils.bigDecimalToCents(BigDecimal("-1.005")))
+        assertEquals("-1,01", SlovakFinanceUtils.formatCentsForInput(-101L))
+        assertEquals(0L, SlovakFinanceUtils.doubleToCents(Double.NaN))
+        assertEquals(0L, SlovakFinanceUtils.doubleToCents(Double.POSITIVE_INFINITY))
+    }
+
+    @Test
     fun parseSlovakDecimal_handlesCommaDotThousandsAndCurrency() {
         assertEquals(BigDecimal("1234.56"), SlovakFinanceUtils.parseSlovakDecimal("1 234,56 €"))
         assertEquals(BigDecimal("1234.56"), SlovakFinanceUtils.parseSlovakDecimal("1.234,56 EUR"))

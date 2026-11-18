@@ -28,7 +28,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -177,10 +179,16 @@ class InvoiceViewModel(
     val isFirebaseMode: Boolean = repository.isFirebaseMode()
 
     private var activeScanJob: Job? = null
+    private var scanGeneration = 0L
+    private var observedUserUid = currentUser.value?.uid
 
     init {
         viewModelScope.launch {
             currentUser.collectLatest { user ->
+                if (user?.uid != observedUserUid) {
+                    observedUserUid = user?.uid
+                    startNewScan()
+                }
                 if (user != null) {
                     repository.initializeUserStats(user.uid)
                 } else {
@@ -208,11 +216,11 @@ class InvoiceViewModel(
     }
 
     fun signOut() {
-        activeScanJob?.cancel()
-        activeScanJob = null
-        _scanState.value = ScanUiState.Idle
+        val scanJob = invalidateScan()
         viewModelScope.launch {
             withContext(NonCancellable) {
+                // Settle a debit before authentication/local data are cleared.
+                scanJob?.join()
                 clearCredentialStateAction()
                 repository.signOutAndClearLocalCache()
             }
@@ -223,10 +231,9 @@ class InvoiceViewModel(
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        activeScanJob?.cancel()
-        activeScanJob = null
-        _scanState.value = ScanUiState.Idle
+        val scanJob = invalidateScan()
         viewModelScope.launch {
+            withContext(NonCancellable) { scanJob?.join() }
             val result = repository.deleteAccount()
             if (result.isSuccess) {
                 withContext(NonCancellable) {
@@ -234,9 +241,10 @@ class InvoiceViewModel(
                 }
                 onSuccess()
             } else {
-                val msg = result.exceptionOrNull()?.localizedMessage
-                    ?: "Účet sa nepodarilo vymazať. Ak ste sa neprihlásili nedávno, odhláste sa, znova prihláste cez Google a operáciu zopakujte."
-                onError(msg)
+                onError(
+                    "Účet sa nepodarilo úplne vymazať. Časť údajov už mohla byť odstránená. " +
+                        "Skontrolujte pripojenie, prípadne sa znova prihláste, a výmaz zopakujte."
+                )
             }
         }
     }
@@ -252,18 +260,34 @@ class InvoiceViewModel(
     fun saveScannedInvoice(
         invoice: Invoice,
         bitmap: Bitmap?,
+        onError: (String) -> Unit = {},
         onSaved: () -> Unit
     ) {
+        val requestUid = currentUser.value?.uid
+        val requestGeneration = scanGeneration
+        if (requestUid == null) {
+            onError("Pred uložením dokladu sa musíte prihlásiť.")
+            return
+        }
         viewModelScope.launch {
-            val archivedPath = if (bitmap != null) {
-                archiveReceipt(bitmap, invoice.id)
-            } else {
-                null
+            try {
+                val archivedPath = bitmap?.let { archiveReceipt(it, invoice.id) }
+                currentCoroutineContext().ensureActive()
+                if (currentUser.value?.uid != requestUid || scanGeneration != requestGeneration) return@launch
+                val finalInvoice = invoice.copy(imageUrl = archivedPath ?: invoice.imageUrl)
+                repository.insertInvoice(finalInvoice).getOrThrow()
+                currentCoroutineContext().ensureActive()
+                if (currentUser.value?.uid != requestUid || scanGeneration != requestGeneration) return@launch
+                _scanState.value = ScanUiState.Idle
+                onSaved()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("InvoiceViewModel", "Invoice save failed: ${e.javaClass.simpleName}")
+                if (currentUser.value?.uid == requestUid && scanGeneration == requestGeneration) {
+                    onError("Uloženie dokladu sa nepodarilo dokončiť. Údaje zostali v revízii; skúste uloženie znova.")
+                }
             }
-            val finalInvoice = invoice.copy(imageUrl = archivedPath ?: invoice.imageUrl)
-            repository.insertInvoice(finalInvoice)
-            _scanState.value = ScanUiState.Idle
-            onSaved()
         }
     }
 
@@ -284,120 +308,131 @@ class InvoiceViewModel(
         "Overujeme dátum a sumy dokladu..."
     )
 
-    fun startNewScan() {
-        activeScanJob?.cancel()
+    private fun invalidateScan(): Job? {
+        scanGeneration += 1
+        val previous = activeScanJob
         activeScanJob = null
+        previous?.cancel()
         _scanState.value = ScanUiState.Idle
+        return previous
+    }
+
+    fun startNewScan() {
+        invalidateScan()
     }
 
     fun scanInvoiceImage(bitmap: Bitmap) {
-        if (activeScanJob?.isActive == true) {
-            return
-        }
+        if (activeScanJob?.isActive == true) return
         val requestUid = currentUser.value?.uid ?: run {
             _scanState.value = ScanUiState.Error("Pred skenovaním sa musíte prihlásiť.")
             return
         }
+        val generation = ++scanGeneration
+        fun ownsScan() = generation == scanGeneration && currentUser.value?.uid == requestUid
 
         activeScanJob = viewModelScope.launch {
-            _scanState.value = ScanUiState.Scanning("Bleskovo kontrolujem kredity...")
+            var reservationId: String? = null
+            var committed = false
+            var refundAttempted = false
+            var refunded = false
+            var progressJob: Job? = null
 
-            val reservation = repository.reserveScanCredit(requestUid)
-            val reservationId = when (reservation) {
-                is CreditReservationResult.Reserved -> reservation.reservationId
-                is CreditReservationResult.UnlimitedSubscriber -> null
-                is CreditReservationResult.InsufficientCredits -> {
-                    if (currentUser.value?.uid == requestUid) {
-                        _scanState.value = ScanUiState.Error(
-                            "Nemáte dostatok kreditov na skenovanie. Zakúpte si kredity alebo Blesk Premium v sekcii Predplatné."
-                        )
+            suspend fun refundCredit() {
+                val id = reservationId ?: return
+                if (committed || refundAttempted) return
+                refundAttempted = true
+                try {
+                    withContext(NonCancellable) {
+                        repository.rollbackScanReservation(requestUid, id)
                     }
-                    return@launch
-                }
-                is CreditReservationResult.ScanAlreadyInProgress -> {
-                    if (currentUser.value?.uid == requestUid) {
-                        _scanState.value = ScanUiState.Error(
-                            "Už prebieha aktívna analýza dokladu. Počkajte prosím na jej dokončenie."
-                        )
-                    }
-                    return@launch
+                    refunded = true
+                } catch (e: Exception) {
+                    Log.e("InvoiceViewModel", "Scan credit rollback failed: ${e.javaClass.simpleName}")
                 }
             }
 
-            val progressJob = launch {
-                for (msg in scannerMessages) {
-                    if (currentUser.value?.uid == requestUid) {
-                        _scanState.value = ScanUiState.Scanning(msg)
-                    }
-                    delay(1200)
+            fun refundNote(): String {
+                if (!refunded) return ""
+                return if (!repository.isFirebaseMode() || requestUid.startsWith("demo_")) {
+                    " Kredit bol vrátený."
+                } else {
+                    " Vrátenie kreditu bolo vyžiadané. Stav kreditu overte po synchronizácii."
                 }
             }
 
             try {
-                val result = aiExtractor.extractInvoiceData(bitmap)
-
-                // Guard against account switch / signOut during async network call (BF-08)
-                if (currentUser.value?.uid != requestUid) {
-                    if (reservationId != null) {
-                        withContext(NonCancellable) {
-                            repository.rollbackScanReservation(requestUid, reservationId)
-                        }
+                _scanState.value = ScanUiState.Scanning("Bleskovo kontrolujem kredity...")
+                // A reservation can finish after cancellation. Obtain its ID so the
+                // finally block can refund it without starting another AI request.
+                val reservation = withContext(NonCancellable) {
+                    repository.reserveScanCredit(requestUid)
+                }
+                reservationId = (reservation as? CreditReservationResult.Reserved)?.reservationId
+                currentCoroutineContext().ensureActive()
+                if (!ownsScan()) return@launch
+                when (reservation) {
+                    is CreditReservationResult.InsufficientCredits -> {
+                        _scanState.value = ScanUiState.Error(
+                            "Nemáte dostatok kreditov na skenovanie. Zakúpte si kredity alebo Blesk Premium v sekcii Predplatné."
+                        )
+                        return@launch
                     }
-                    return@launch
+                    is CreditReservationResult.ScanAlreadyInProgress -> {
+                        _scanState.value = ScanUiState.Error(
+                            "Už prebieha aktívna analýza dokladu. Počkajte prosím na jej dokončenie."
+                        )
+                        return@launch
+                    }
+                    else -> Unit
                 }
 
+                progressJob = launch {
+                    for (message in scannerMessages) {
+                        if (ownsScan()) _scanState.value = ScanUiState.Scanning(message)
+                        delay(1200)
+                    }
+                }
+                val result = aiExtractor.extractInvoiceData(bitmap)
+                currentCoroutineContext().ensureActive()
+                if (!ownsScan()) return@launch
                 when (result) {
                     is AiExtractionResult.Success -> {
-                        if (reservationId != null) {
-                            repository.commitScanReservation(requestUid, reservationId)
+                        reservationId?.let { id ->
+                            withContext(NonCancellable) {
+                                repository.commitScanReservation(requestUid, id)
+                                committed = true
+                            }
                         }
-                        _scanState.value = ScanUiState.Success(result.data, bitmap)
+                        currentCoroutineContext().ensureActive()
+                        if (ownsScan()) _scanState.value = ScanUiState.Success(result.data, bitmap)
                     }
-                    is AiExtractionResult.InvalidDocument -> {
-                        if (reservationId != null) {
-                            repository.rollbackScanReservation(requestUid, reservationId)
+                    else -> {
+                        refundCredit()
+                        currentCoroutineContext().ensureActive()
+                        if (ownsScan()) {
+                            val message = when (result) {
+                                is AiExtractionResult.InvalidDocument -> result.message
+                                is AiExtractionResult.Timeout -> "AI analýza vypršala po 60 sekundách. Skúste to prosím znova."
+                                is AiExtractionResult.ServiceError -> result.message
+                                else -> error("Unhandled AI result")
+                            }
+                            _scanState.value = ScanUiState.Error("$message${refundNote()}")
                         }
-                        val refundNote = if (reservationId != null) " Kredit bol vrátený." else ""
-                        _scanState.value = ScanUiState.Error("${result.message}$refundNote")
-                    }
-                    is AiExtractionResult.Timeout -> {
-                        if (reservationId != null) {
-                            repository.rollbackScanReservation(requestUid, reservationId)
-                        }
-                        val refundNote = if (reservationId != null) " Kredit bol vrátený." else ""
-                        _scanState.value = ScanUiState.Error(
-                            "AI analýza vypršala po 60 sekundách. Skúste to prosím znova.$refundNote"
-                        )
-                    }
-                    is AiExtractionResult.ServiceError -> {
-                        if (reservationId != null) {
-                            repository.rollbackScanReservation(requestUid, reservationId)
-                        }
-                        val refundNote = if (reservationId != null) " Kredit bol vrátený." else ""
-                        _scanState.value = ScanUiState.Error("${result.message}$refundNote")
                     }
                 }
             } catch (e: CancellationException) {
-                if (reservationId != null) {
-                    withContext(NonCancellable) {
-                        repository.rollbackScanReservation(requestUid, reservationId)
-                    }
-                }
                 throw e
             } catch (e: Exception) {
-                if (reservationId != null) {
-                    withContext(NonCancellable) {
-                        repository.rollbackScanReservation(requestUid, reservationId)
-                    }
-                }
-                if (currentUser.value?.uid == requestUid) {
-                    val refundNote = if (reservationId != null) " Kredit bol vrátený." else ""
+                refundCredit()
+                Log.e("InvoiceViewModel", "Invoice scan failed: ${e.javaClass.simpleName}")
+                if (ownsScan()) {
                     _scanState.value = ScanUiState.Error(
-                        "Neočakávaná chyba pri spracovaní dokladu: ${e.localizedMessage ?: "neznáma chyba"}.$refundNote"
+                        "Neočakávaná chyba pri spracovaní dokladu. Skúste to prosím znova.${refundNote()}"
                     )
                 }
             } finally {
-                progressJob.cancel()
+                progressJob?.cancel()
+                refundCredit()
             }
         }
     }

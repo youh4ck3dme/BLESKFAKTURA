@@ -23,6 +23,24 @@ import org.robolectric.annotation.Config
 @Config(sdk = [24, 36])
 class DashboardSummaryTest {
 
+    @Test
+    fun overdueBoundary_ignoresTodayPaidAndInvalidDueDatesAndClampsPendingCount() {
+        val today = SlovakFinanceUtils.parseDateUtcMidnightMillis("2026-11-18")!!
+        val base = Invoice(issueDate = "2026-11-18", totalAmountCents = 123L, isPaid = false)
+        val summary = computeDashboardSummary(listOf(
+            base.copy(id = "today", dueDate = "2026-11-18"),
+            base.copy(id = "yesterday", dueDate = "2026-11-17"),
+            base.copy(id = "paid", dueDate = "2026-11-17", isPaid = true),
+            base.copy(id = "invalid", dueDate = "2026-11-17 extra"),
+            base.copy(id = "missing", dueDate = null)
+        ), pendingPurchaseCount = -5, todayUtcMillis = today)
+        assertEquals(1, summary.overdueCount)
+        assertEquals(4, summary.unpaidCount)
+        assertEquals(492L, summary.unpaidTotalCents)
+        assertEquals(0, summary.pendingPurchaseCount)
+        assertEquals(4, summary.totalPendingCount)
+    }
+
     @get:Rule
     val composeTestRule = createComposeRule()
 

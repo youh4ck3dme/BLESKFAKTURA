@@ -135,7 +135,8 @@ dependencies {
 }
 
 tasks.withType<Test> {
-  failFast = true
+  // Report every test category in one CI run, even when one regression fails.
+  failFast = false
   maxHeapSize = "768m"
   maxParallelForks = 1
   forkEvery = 1

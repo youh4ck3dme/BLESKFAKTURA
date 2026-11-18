@@ -36,14 +36,15 @@
 </head>
 <body>
   <h1>Zásady ochrany osobných údajov</h1>
-  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>) • Platné od: 16. 11. 2026</p>
+  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>) • Technický návrh: 18. 11. 2026</p>
+  <p><strong>Návrh pred zverejnením:</strong> vydavateľ musí potvrdiť identitu prevádzkovateľa, kontakt, právne základy, pravidlá retencie a vybavovania žiadostí. Tento text opisuje implementáciu; nepotvrdzuje nasadenie služieb ani schválenie právnych údajov.</p>
 
   <section>
     <h2>1. Prevádzkovateľ a kontakt</h2>
     <p>
       Prevádzkovateľom mobilnej aplikácie <strong>Blesková Faktúra</strong> je jej vydavateľ.
       V otázkach ochrany osobných údajov (GDPR) alebo pri žiadostiach o prístup či výmaz údajov nás kontaktujte na:
-      <a href="mailto:erikbabcan@gmail.com">erikbabcan@gmail.com</a>.
+      <a href="mailto:support@vorkei.com">support@vorkei.com</a>.
     </p>
   </section>
 
@@ -61,9 +62,9 @@
   <section>
     <h2>3. Účel spracúvania a príjemcovia</h2>
     <ul>
-      <li><strong>Autentifikácia a cloudová synchronizácia:</strong> Google Ireland Ltd. / Firebase Authentication a Cloud Firestore (pomenovaná databáza s izolovaným priestorom <code>users/{uid}</code> chránená bezpečnostnými pravidlami výlučne pre prihláseného vlastníka).</li>
-      <li><strong>AI extrakcia údajov z dokladu:</strong> snímka dokladu je šifrovane (TLS) a jednorazovo odoslaná prostredníctvom služby Firebase AI Logic (Gemini) za účelom vyťaženia štruktúrovaných účtovných polí. Snímky ani účtovné údaje nie sú využívané na cielenú reklamu.</li>
-      <li><strong>Nákupy a predplatné:</strong> Google Play Billing spracúva platbu a backendová Firebase Cloud Function (<code>europe-west1</code>) overuje <code>purchaseToken</code> voči Google Play Developer API pred pripísaním kreditov alebo predplatného.</li>
+      <li><strong>Autentifikácia a cloudová synchronizácia:</strong> Firebase Authentication a Cloud Firestore od Google. Kód a pravidlá izolujú údaje v priestore <code>users/{uid}</code>; aktuálne nasadenie a zmluvné údaje spracovateľov musí potvrdiť prevádzkovateľ.</li>
+      <li><strong>AI extrakcia údajov z dokladu:</strong> snímka sa odosiela cez TLS prostredníctvom Firebase AI Logic (Gemini) na vyťaženie účtovných polí. Aplikácia ju neukladá do Firestore. Spracúvanie a uchovávanie na strane poskytovateľa závisí od použitej služby a plánu; pred použitím skutočných dokladov treba overiť <a href="https://ai.google.dev/gemini-api/terms">aktuálne podmienky Gemini API</a>. Lokálne uloženie fotografie nie je zárukou jej nespracúvania externou AI službou.</li>
+      <li><strong>Nákupy a predplatné:</strong> klient Google Play Billing a implementovaný backend v regióne <code>europe-west1</code> počítajú s overením <code>purchaseToken</code> cez Google Play Developer API pred pripísaním nároku. Nasadenie a skutočný nákup nie sú týmto textom potvrdené.</li>
       <li><strong>Export PDF:</strong> súhrnný PDF výkaz vzniká lokálne v zariadení a zdieľa sa iba vtedy, keď používateľ aktívne zvolí export a cieľovú aplikáciu.</li>
     </ul>
   </section>
@@ -73,17 +74,17 @@
     <p>
       Lokálna databáza (Room) aj archivované fotografie sú uložené v súkromnom úložisku aplikácie.
       Automatické zálohovanie systému Android (<code>allowBackup="false"</code>) aj prenos citlivej databázy, preferencií a priečinka <code>receipts</code> sú v manifeste a pravidlách zálohovania zablokované.
-      Pri odhlásení zo zariadenia sa lokálna vyrovnávacia pamäť faktúr, dočasný priečinok kamery aj PDF cache okamžite vymažú.
+      Odhlásenie čistí databázovú kópiu faktúr, dočasný priečinok kamery a PDF exporty. Archivované fotografie v <code>filesDir/receipts/</code> sa pri odhlásení všetky automaticky nemažú.
     </p>
   </section>
 
   <section>
     <h2>5. Retenčné lehoty a vymazanie údajov</h2>
     <ul>
-      <li><strong>Účet a cloudové doklady (<code>users/{uid}/invoices/*</code>):</strong> uchovávané počas aktívneho používania účtu. Pri výmaze priamo v aplikácii (<em>Nastavenia účtu &rarr; Vymazať účet a všetky dáta</em>) sa údaje z Firebase Auth, Firestore, Room aj lokálnych snímok odstránia <strong>okamžite</strong>. Webové/e-mailové žiadosti cez <a href="./account-deletion.html">stránku vymazania účtu</a> spracúvame najneskôr <strong>do 14 dní</strong> po overení vlastníctva e-mailu.</li>
-      <li><strong>Dočasné súbory na zariadení:</strong> vygenerované PDF výkazy v <code>cacheDir</code> sa automaticky čistia po <strong>24 hodinách</strong> a pri odhlásení; dočasné súbory fotoaparátu (<code>cacheDir/camera</code>) sa odstraňujú pri odhlásení alebo výmaze účtu.</li>
+      <li><strong>Účet a cloudové doklady (<code>users/{uid}/invoices/*</code>):</strong> výmaz spustíte v aplikácii cez <em>Nastavenia &rarr; Vymazať účet a všetky dáta</em>. Postup maže známe lokálne snímky a záznamy, cloudové doklady a profil, následne Firebase Auth účet. Vyžaduje pripojenie a prípadne nové prihlásenie; pri chybe môže zostať čiastočne dokončený. Kontakt pre žiadosť je na <a href="./account-deletion.html">stránke vymazania účtu</a>; prevádzkovateľ musí pred zverejnením potvrdiť postup a lehoty vybavenia.</li>
+      <li><strong>Dočasné súbory na zariadení:</strong> PDF exporty v <code>cacheDir</code> sa čistia pri ďalšom exporte a odhlásení, bez automatického 24-hodinového časovača. Staré súbory fotoaparátu sa čistia pri ďalšom vytvorení snímky (vek nad 24 hodín), pri odhlásení alebo výmaze účtu.</li>
       <li><strong>Snímka odoslaná na AI vyťaženie:</strong> prenáša sa jednorazovo za účelom vyťaženia polí dokladu; aplikácia obrázok neukladá do cloudovej databázy Firestore.</li>
-      <li><strong>Záznamy o overení platieb (<code>billingTokens</code>):</strong> ak ste uskutočnili platený nákup cez Google Play, technický SHA-256 hash tokenu, ID produktu, ID objednávky a stav transakcie (bez čísel kariet) môžu byť uchovávané po dobu potrebnú na ochranu pred opakovaným zneužitím tokenov a splnenie zákonných daňových/účtovných lehôt (typicky až <strong>10 rokov</strong> podľa účtovných predpisov SR/EÚ).</li>
+      <li><strong>Záznamy o overení platieb (<code>billingTokens</code>):</strong> serverová implementácia eviduje technické údaje na idempotenciu a prevenciu zneužitia. Klientsky výmaz účtu ich nemaže a v kóde nie je automatická lehota ich odstránenia. Konkrétnu dobu a právny dôvod uchovania musí prevádzkovateľ stanoviť pred spustením nákupov; tento návrh neustanovuje desaťročnú lehotu.</li>
     </ul>
   </section>
 

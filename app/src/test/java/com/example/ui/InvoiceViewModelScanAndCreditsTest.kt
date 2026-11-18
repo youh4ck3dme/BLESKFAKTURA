@@ -21,6 +21,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,7 +54,7 @@ class InvoiceViewModelScanAndCreditsTest {
             initialUser = initialUser,
             initialCredits = initialCredits,
             initialSubscribed = initialSubscribed
-        )
+        ).apply { firebaseModeEnabled = false }
         val vm = InvoiceViewModel(
             application = app,
             repository = repo,
@@ -198,7 +199,8 @@ class InvoiceViewModelScanAndCreditsTest {
         vm.scanInvoiceImage(testBitmap())
         advanceUntilIdle()
         val secondErr = vm.scanState.value as ScanUiState.Error
-        assertTrue(secondErr.message.contains("Unexpected network drop"))
+        assertFalse(secondErr.message.contains("Unexpected network drop"))
+        assertTrue(secondErr.message.contains("Neočakávaná chyba"))
         assertTrue(secondErr.message.contains("Kredit bol vrátený."))
         assertEquals(2, repo.rollbackCalls)
         assertEquals(7, repo.currentStatsSnapshot().credits)
@@ -265,7 +267,7 @@ class InvoiceViewModelScanAndCreditsTest {
         assertEquals("user_1", repo.rolledBackReservations.first().first)
         assertEquals(0, repo.commitCalls)
         assertEquals(10, repo.currentStatsSnapshot().credits)
-        assertTrue(vm.scanState.value is ScanUiState.Scanning)
+        assertTrue(vm.scanState.value is ScanUiState.Idle)
     }
 
     @Test

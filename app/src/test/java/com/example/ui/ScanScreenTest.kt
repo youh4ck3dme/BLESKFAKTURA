@@ -44,7 +44,10 @@ class ScanScreenTest {
         archiveReceipt: suspend (Bitmap, String) -> String? = { _, id -> "/private/receipts/$id.jpg" }
     ): Triple<InvoiceViewModel, FakeInvoiceDataGateway, FakeInvoiceAiExtractor> {
         val app = ApplicationProvider.getApplicationContext<Application>()
-        val repo = FakeInvoiceDataGateway(initialCredits = 10)
+        val repo = FakeInvoiceDataGateway(initialCredits = 10).apply {
+            // These UI tests assert the synchronous local demo ledger.
+            firebaseModeEnabled = false
+        }
         val vm = InvoiceViewModel(
             application = app,
             repository = repo,

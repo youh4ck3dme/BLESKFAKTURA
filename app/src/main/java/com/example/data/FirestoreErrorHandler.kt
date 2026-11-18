@@ -3,8 +3,6 @@ package com.example.data
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestoreException
-import kotlinx.coroutines.CancellationException
-import org.json.JSONArray
 import org.json.JSONObject
 
 enum class OperationType(val value: String) {
@@ -19,39 +17,20 @@ enum class OperationType(val value: String) {
 fun handleFirestoreError(
     exception: Throwable,
     operationType: OperationType,
-    path: String?,
-    auth: FirebaseAuth? = runCatching { FirebaseAuth.getInstance() }.getOrNull()
+    @Suppress("UNUSED_PARAMETER") path: String?,
+    @Suppress("UNUSED_PARAMETER") auth: FirebaseAuth? = null
 ): String {
-    val causes = generateSequence(exception) { it.cause }
-    val rootError = causes.firstOrNull { it is FirebaseFirestoreException }
-        ?: causes.firstOrNull { it !is CancellationException }
-        ?: exception
-
-    val currentUser = runCatching { auth?.currentUser }.getOrNull()
-
-    val providerInfoList = currentUser?.providerData?.map { provider ->
-        JSONObject().apply {
-            put("providerId", provider.providerId)
-            put("email", provider.email)
-        }
-    } ?: emptyList()
-
-    val authInfoJson = JSONObject().apply {
-        put("userId", currentUser?.uid)
-        put("email", currentUser?.email)
-        put("emailVerified", currentUser?.isEmailVerified)
-        put("tenantId", currentUser?.tenantId)
-        put("providerInfo", JSONArray(providerInfoList))
-    }
-
+    // SDK messages, document paths and auth profiles can contain private account/receipt data.
+    // Keep only the operation and the SDK's finite error-code enum, including wrapped errors.
+    val firestoreError = generateSequence(exception) { it.cause }
+        .filterIsInstance<FirebaseFirestoreException>()
+        .firstOrNull()
     val errorInfoJson = JSONObject().apply {
-        put("error", rootError.message ?: rootError.toString())
         put("operationType", operationType.value)
-        put("path", path)
-        put("authInfo", authInfoJson)
+        put("code", firestoreError?.code?.name ?: "UNKNOWN")
     }
 
     val jsonString = errorInfoJson.toString()
-    Log.e("FirestoreError", "Firestore Error: $jsonString")
+    Log.e("FirestoreError", "Firestore operation failed: $jsonString")
     return jsonString
 }

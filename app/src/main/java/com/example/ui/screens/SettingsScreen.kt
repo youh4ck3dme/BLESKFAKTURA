@@ -221,7 +221,11 @@ fun SettingsScreen(
                             )
                         }
                         Text(
-                            text = "Vaše doklady sú uložené pod vaším Google účtom v izolovanom Firestore priestore a v súkromnom úložisku zariadenia (bez Android záloh). Snímky odoslané na AI vyťaženie sa nepoužívajú na reklamu.",
+                            text = if (currentUser?.uid?.startsWith("demo_") == true) {
+                                "Demo účet uchováva doklady v tomto zariadení. Pri AI analýze sa fotografia odošle externej službe."
+                            } else {
+                                "Doklady sa ukladajú v tomto zariadení a synchronizujú s prihláseným účtom. Pri AI analýze sa fotografia odošle externej službe."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -303,7 +307,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            text = "Trvalo odstráni váš profil, všetky faktúry v cloude aj na zariadení, lokálne snímky dokladov a účet Firebase Auth.",
+                            text = "Spustí výmaz profilu, dokladov a priradených snímok. Cloudový výmaz vyžaduje pripojenie a môže vyžadovať nové prihlásenie. Technické záznamy o nákupoch sa týmto postupom nemažú.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
@@ -351,8 +355,8 @@ fun SettingsScreen(
                         "Blesková Faktúra (sk.bizagent.bleskovafaktura)\nKontakt: $supportEmail\n\n" +
                             "1. Spracúvané údaje: Google identifikátor účtu (UID, e-mail, meno), účtovné doklady (dodávateľ, IČO/DIČ, dátumy, sumy, DPH) a snímky dokladov.\n\n" +
                             "2. Účel a bezpečnosť: Autentifikácia cez Google/Firebase Auth, cloudová synchronizácia vo Firestore (prístup prísne izolovaný na váš UID), jednorazová AI extrakcia cez Firebase AI Logic (chránené cez App Check / Play Integrity) a overenie nákupov Google Play Billing.\n\n" +
-                            "3. Uchovávanie (retencia): Účet a doklady uchovávame počas aktívneho používania; v aplikácii ich vymažete okamžite (do 14 dní pri e-mailovej žiadosti). Dočasné PDF exporty v cache sa čistia po 24 hodinách a pri odhlásení. Technický hash tokenu nákupu (billingTokens bez čísel kariet) sa môže uchovávať v zákonnej daňovej a proti-podvodnej lehote.\n\n" +
-                            "4. Výmaz údajov: Účet a dáta vymažete priamo tu v Nastaveniach alebo e-mailom na $supportEmail.",
+                            "3. Lokálne údaje: PDF exporty sa čistia pri ďalšom exporte a odhlásení. Archivované fotografie zostávajú v súkromnom úložisku aplikácie; odhlásenie nezaručuje ich vymazanie.\n\n" +
+                            "4. Výmaz údajov: Výmaz spustíte tu v Nastaveniach alebo oň požiadate e-mailom na $supportEmail. Cloudový výmaz vyžaduje pripojenie a môže vyžadovať nové prihlásenie. Pri chybe sa výmaz nemusí dokončiť; riaďte sa zobrazenou správou. Technické záznamy o overení nákupov sa týmto postupom nemažú.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -370,7 +374,7 @@ fun SettingsScreen(
             onDismissRequest = { if (!isDeleting) showDeleteConfirm = false },
             title = { Text("Natrvalo vymazať účet?", fontWeight = FontWeight.Bold) },
             text = {
-                Text("Táto akcia je nevratná. Všetky uložené doklady, štatistiky, zostávajúce kredity a snímky budú natrvalo odstránené.")
+                Text("Táto akcia je nevratná. Po úspešnom dokončení sa odstráni účet, doklady, štatistiky a zostávajúce kredity. Pri chybe môže byť výmaz čiastočný. Technické záznamy o nákupoch zostávajú zachované.")
             },
             confirmButton = {
                 Button(
