@@ -9,11 +9,14 @@ import androidx.credentials.CredentialManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AiExtractionResult
+import com.example.data.BillingGateway
 import com.example.data.BillingProduct
 import com.example.data.CreditReservationResult
 import com.example.data.ExtractedInvoiceJson
 import com.example.data.Invoice
+import com.example.data.InvoiceAiExtractor
 import com.example.data.InvoiceAiService
+import com.example.data.InvoiceDataGateway
 import com.example.data.InvoiceRepository
 import com.example.data.PlayBillingManager
 import com.example.data.PlayBillingUiState
@@ -94,9 +97,28 @@ sealed interface ScanUiState {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class InvoiceViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = InvoiceRepository(application)
-    private val playBillingManager = PlayBillingManager(application)
+class InvoiceViewModel(
+    application: Application,
+    private val repository: InvoiceDataGateway,
+    private val playBillingManager: BillingGateway,
+    private val aiExtractor: InvoiceAiExtractor,
+    private val archiveReceipt: suspend (Bitmap, String) -> String? = { bitmap, id ->
+        ReceiptImageProcessor.archiveReceiptBitmap(application, bitmap, id)
+    },
+    private val clearCredentialStateAction: suspend () -> Unit = {
+        runCatching {
+            CredentialManager.create(application).clearCredentialState(ClearCredentialStateRequest())
+        }.onFailure { e ->
+            Log.w("InvoiceViewModel", "clearCredentialState skipped: ${e.message}")
+        }
+    }
+) : AndroidViewModel(application) {
+    constructor(application: Application) : this(
+        application = application,
+        repository = InvoiceRepository(application),
+        playBillingManager = PlayBillingManager(application),
+        aiExtractor = InvoiceAiService
+    )
 
     val currentUser: StateFlow<UserInfo?> = repository.currentUser
     val syncError: StateFlow<String?> = repository.syncError
@@ -191,11 +213,7 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
         _scanState.value = ScanUiState.Idle
         viewModelScope.launch {
             withContext(NonCancellable) {
-                runCatching {
-                    CredentialManager.create(getApplication()).clearCredentialState(ClearCredentialStateRequest())
-                }.onFailure { e ->
-                    Log.w("InvoiceViewModel", "clearCredentialState skipped: ${e.message}")
-                }
+                clearCredentialStateAction()
                 repository.signOutAndClearLocalCache()
             }
         }
@@ -212,9 +230,7 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
             val result = repository.deleteAccount()
             if (result.isSuccess) {
                 withContext(NonCancellable) {
-                    runCatching {
-                        CredentialManager.create(getApplication()).clearCredentialState(ClearCredentialStateRequest())
-                    }
+                    clearCredentialStateAction()
                 }
                 onSuccess()
             } else {
@@ -240,7 +256,7 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
     ) {
         viewModelScope.launch {
             val archivedPath = if (bitmap != null) {
-                ReceiptImageProcessor.archiveReceiptBitmap(getApplication(), bitmap, invoice.id)
+                archiveReceipt(bitmap, invoice.id)
             } else {
                 null
             }
@@ -318,7 +334,7 @@ class InvoiceViewModel(application: Application) : AndroidViewModel(application)
             }
 
             try {
-                val result = InvoiceAiService.extractInvoiceData(bitmap)
+                val result = aiExtractor.extractInvoiceData(bitmap)
 
                 // Guard against account switch / signOut during async network call (BF-08)
                 if (currentUser.value?.uid != requestUid) {

@@ -305,7 +305,8 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .widthIn(max = 760.dp)
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    .testTag("dashboard_lazy_column"),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {

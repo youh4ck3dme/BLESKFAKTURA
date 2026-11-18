@@ -21,10 +21,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
@@ -79,6 +81,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.Invoice
 import com.example.data.SlovakFinanceUtils
 import kotlinx.coroutines.Dispatchers
@@ -363,29 +366,32 @@ fun InvoiceDetailDialog(
         unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
     )
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Card(
             modifier = Modifier
+                .widthIn(max = 560.dp)
                 .fillMaxWidth()
-                .padding(4.dp)
+                .padding(horizontal = 16.dp, vertical = 24.dp)
                 .testTag("invoice_detail_dialog"),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 8.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                         Text(
                             text = "Detail dokladu",
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
@@ -394,56 +400,48 @@ fun InvoiceDetailDialog(
                         IconButton(onClick = onDismiss) {
                             Icon(Icons.Default.Close, contentDescription = "Zavrieť", tint = MaterialTheme.colorScheme.onSurface)
                         }
-                    }
                 }
 
                 archivedBitmap?.let { bmp ->
-                    item {
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = "Archivovaná fotografia dokladu",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(160.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp)),
-                            contentScale = ContentScale.Crop
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Archivovaná fotografia dokladu",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+
+                validationError?.let { err ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("detail_validation_error")
+                    ) {
+                        Text(
+                            text = err,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                            modifier = Modifier.padding(10.dp)
                         )
                     }
                 }
 
-                validationError?.let { err ->
-                    item {
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("detail_validation_error")
-                        ) {
-                            Text(
-                                text = err,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                modifier = Modifier.padding(10.dp)
-                            )
-                        }
-                    }
-                }
+                OutlinedTextField(
+                    value = supplierName,
+                    onValueChange = { supplierName = it; validationError = null },
+                    label = { Text("Dodávateľ") },
+                    modifier = Modifier.fillMaxWidth().testTag("edit_supplier_input"),
+                    singleLine = true,
+                    colors = fieldColors
+                )
 
-                item {
-                    OutlinedTextField(
-                        value = supplierName,
-                        onValueChange = { supplierName = it; validationError = null },
-                        label = { Text("Dodávateľ") },
-                        modifier = Modifier.fillMaxWidth().testTag("edit_supplier_input"),
-                        singleLine = true,
-                        colors = fieldColors
-                    )
-                }
-
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = ico,
                             onValueChange = { ico = it },
@@ -461,37 +459,33 @@ fun InvoiceDetailDialog(
                             singleLine = true,
                             colors = fieldColors
                         )
-                    }
                 }
 
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedTextField(
-                            value = totalAmountStr,
-                            onValueChange = { totalAmountStr = it; validationError = null },
-                            label = { Text("Suma s DPH (€)") },
-                            modifier = Modifier.weight(1.1f).testTag("edit_amount_input"),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = fieldColors
-                        )
-                        OutlinedTextField(
-                            value = vatRateStr,
-                            onValueChange = { vatRateStr = it; validationError = null },
-                            label = { Text("Sadzba (%)") },
-                            modifier = Modifier.weight(0.75f).testTag("edit_vat_rate_input"),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = fieldColors
-                        )
-                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = totalAmountStr,
+                        onValueChange = { totalAmountStr = it; validationError = null },
+                        label = { Text("Suma s DPH (€)") },
+                        modifier = Modifier.weight(1.1f).testTag("edit_amount_input"),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = fieldColors
+                    )
+                    OutlinedTextField(
+                        value = vatRateStr,
+                        onValueChange = { vatRateStr = it; validationError = null },
+                        label = { Text("Sadzba (%)") },
+                        modifier = Modifier.weight(0.75f).testTag("edit_vat_rate_input"),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = fieldColors
+                    )
                 }
 
-                item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                         OutlinedTextField(
                             value = vatAmountStr,
                             onValueChange = { vatAmountStr = it; validationError = null },
@@ -518,37 +512,33 @@ fun InvoiceDetailDialog(
                         ) {
                             Text("Prepočítať", fontWeight = FontWeight.Bold)
                         }
-                    }
                 }
 
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedTextField(
-                            value = issueDate,
-                            onValueChange = { issueDate = it; validationError = null },
-                            label = { Text("Vystavenie") },
-                            modifier = Modifier.weight(1f).testTag("edit_date_input"),
-                            singleLine = true,
-                            colors = fieldColors
-                        )
-                        OutlinedTextField(
-                            value = dueDate,
-                            onValueChange = { dueDate = it; validationError = null },
-                            label = { Text("Splatnosť") },
-                            placeholder = { Text("RRRR-MM-DD") },
-                            modifier = Modifier.weight(1f).testTag("edit_due_date_input"),
-                            singleLine = true,
-                            colors = fieldColors
-                        )
-                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = issueDate,
+                        onValueChange = { issueDate = it; validationError = null },
+                        label = { Text("Vystavenie") },
+                        modifier = Modifier.weight(1f).testTag("edit_date_input"),
+                        singleLine = true,
+                        colors = fieldColors
+                    )
+                    OutlinedTextField(
+                        value = dueDate,
+                        onValueChange = { dueDate = it; validationError = null },
+                        label = { Text("Splatnosť") },
+                        placeholder = { Text("RRRR-MM-DD") },
+                        modifier = Modifier.weight(1f).testTag("edit_due_date_input"),
+                        singleLine = true,
+                        colors = fieldColors
+                    )
                 }
 
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                         Box(modifier = Modifier.weight(1f)) {
                             OutlinedTextField(
                                 value = category,
@@ -599,25 +589,21 @@ fun InvoiceDetailDialog(
                                 modifier = Modifier.testTag("edit_paid_switch")
                             )
                         }
-                    }
                 }
 
-                item {
-                    OutlinedTextField(
-                        value = description,
-                        onValueChange = { description = it },
-                        label = { Text("Poznámka / Popis položky") },
-                        modifier = Modifier.fillMaxWidth().testTag("edit_description_input"),
-                        colors = fieldColors
-                    )
-                }
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Poznámka / Popis položky") },
+                    modifier = Modifier.fillMaxWidth().testTag("edit_description_input"),
+                    colors = fieldColors
+                )
 
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                         OutlinedButton(
                             onClick = onDismiss,
                             modifier = Modifier.weight(1f).height(48.dp).testTag("cancel_edit_button"),
@@ -707,7 +693,6 @@ fun InvoiceDetailDialog(
                             Text("Uložiť", fontWeight = FontWeight.Bold)
                         }
                     }
-                }
             }
         }
     }

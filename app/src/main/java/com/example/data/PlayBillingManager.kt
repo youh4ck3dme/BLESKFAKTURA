@@ -198,17 +198,17 @@ class PlayBillingManager(
     private val billingScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val packageNameProvider: () -> String = { BuildConfig.APPLICATION_ID },
     enableBillingClient: Boolean = true
-) : PurchasesUpdatedListener {
+) : PurchasesUpdatedListener, BillingGateway {
     private val appContext = context.applicationContext
 
     private val _billingState = MutableStateFlow<PlayBillingUiState>(PlayBillingUiState.Idle)
-    val billingState: StateFlow<PlayBillingUiState> = _billingState.asStateFlow()
+    override val billingState: StateFlow<PlayBillingUiState> = _billingState.asStateFlow()
 
     private val _catalogPrices = MutableStateFlow<Map<String, String>>(emptyMap())
-    val catalogPrices: StateFlow<Map<String, String>> = _catalogPrices.asStateFlow()
+    override val catalogPrices: StateFlow<Map<String, String>> = _catalogPrices.asStateFlow()
 
     private val _pendingUnverifiedCount = MutableStateFlow(0)
-    val pendingUnverifiedCount: StateFlow<Int> = _pendingUnverifiedCount.asStateFlow()
+    override val pendingUnverifiedCount: StateFlow<Int> = _pendingUnverifiedCount.asStateFlow()
 
     private val _productDetails = mutableMapOf<String, ProductDetails>()
     private val inFlightTokens: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
@@ -242,7 +242,7 @@ class PlayBillingManager(
         null
     }
 
-    fun startConnection() {
+    override fun startConnection() {
         val client = billingClient ?: return
         if (client.isReady) {
             isConnected = true
@@ -275,7 +275,7 @@ class PlayBillingManager(
         })
     }
 
-    fun launchPurchase(activity: Activity?, product: BillingProduct) {
+    override fun launchPurchase(activity: Activity?, product: BillingProduct) {
         if (activity == null) {
             _billingState.value = PlayBillingUiState.Error("Nákup vyžaduje aktívne okno aplikácie.")
             return
@@ -331,7 +331,7 @@ class PlayBillingManager(
         }
     }
 
-    fun retryPendingVerifications() {
+    override fun retryPendingVerifications() {
         val client = billingClient ?: return
         if (!client.isReady) {
             startConnection()
@@ -479,11 +479,11 @@ class PlayBillingManager(
         }
     }
 
-    fun clearMessage() {
+    override fun clearMessage() {
         _billingState.value = PlayBillingUiState.Idle
     }
 
-    fun endConnection() {
+    override fun endConnection() {
         if (billingClient?.isReady == true) {
             billingClient.endConnection()
         }

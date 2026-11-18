@@ -35,7 +35,7 @@ sealed interface AiExtractionResult {
     data object Timeout : AiExtractionResult
 }
 
-object InvoiceAiService {
+object InvoiceAiService : InvoiceAiExtractor {
     private const val TAG = "InvoiceAiService"
     private const val MODEL_NAME = "gemini-3.5-flash-lite"
     private const val AI_TIMEOUT_MS = 60_000L
@@ -106,7 +106,7 @@ object InvoiceAiService {
         )
     }
 
-    suspend fun extractInvoiceData(bitmap: Bitmap): AiExtractionResult =
+    override suspend fun extractInvoiceData(bitmap: Bitmap): AiExtractionResult =
         extractInvoiceData(bitmap, Dispatchers.IO) { scaledBitmap, promptText ->
             model.generateContent(
                 content {

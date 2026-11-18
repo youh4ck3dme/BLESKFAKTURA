@@ -49,7 +49,7 @@ class InvoiceRepository(
     context: Context,
     private val injectedFirestore: FirebaseFirestore? = null,
     private val injectedAuth: FirebaseAuth? = null
-) {
+) : InvoiceDataGateway {
     private val appContext = context.applicationContext
     private val database = AppDatabase.getDatabase(appContext)
     private val invoiceDao = database.invoiceDao()
@@ -62,10 +62,10 @@ class InvoiceRepository(
     private var syncedUid: String? = null
 
     private val _currentUser = MutableStateFlow<UserInfo?>(null)
-    val currentUser: StateFlow<UserInfo?> = _currentUser.asStateFlow()
+    override val currentUser: StateFlow<UserInfo?> = _currentUser.asStateFlow()
 
     private val _syncError = MutableStateFlow<String?>(null)
-    val syncError: StateFlow<String?> = _syncError.asStateFlow()
+    override val syncError: StateFlow<String?> = _syncError.asStateFlow()
 
     private val firebaseAuth: FirebaseAuth? by lazy {
         injectedAuth ?: try {
@@ -114,15 +114,15 @@ class InvoiceRepository(
         }
     }
 
-    fun isFirebaseMode(): Boolean = isFirebaseReady
+    override fun isFirebaseMode(): Boolean = isFirebaseReady
 
-    fun clearSyncError() {
+    override fun clearSyncError() {
         _syncError.value = null
     }
 
     // --- Authentication ---
 
-    suspend fun signInWithGoogle(idToken: String): Result<UserInfo> = withContext(Dispatchers.IO) {
+    override suspend fun signInWithGoogle(idToken: String): Result<UserInfo> = withContext(Dispatchers.IO) {
         val auth = firebaseAuth
         if (auth == null || firestoreDb == null) {
             return@withContext Result.failure(IllegalStateException("Firebase nie je v tejto zostave nakonfigurovaný."))
@@ -149,7 +149,7 @@ class InvoiceRepository(
         }
     }
 
-    fun signInDemoUser() {
+    override fun signInDemoUser() {
         if (!BuildConfig.DEBUG) {
             Log.w(TAG, "Demo sign-in blocked in release builds.")
             return
@@ -167,7 +167,7 @@ class InvoiceRepository(
         }
     }
 
-    suspend fun signOutAndClearLocalCache() = withContext(Dispatchers.IO) {
+    override suspend fun signOutAndClearLocalCache() = withContext(Dispatchers.IO) {
         val oldUid = _currentUser.value?.uid
         stopCloudSync()
         _syncError.value = null
@@ -205,7 +205,7 @@ class InvoiceRepository(
 
     // --- Cloud Sync & Lifecycle ---
 
-    fun stopCloudSync() {
+    override fun stopCloudSync() {
         userStatsListener?.remove()
         userStatsListener = null
         invoicesListener?.remove()
@@ -213,7 +213,7 @@ class InvoiceRepository(
         syncedUid = null
     }
 
-    suspend fun initializeUserStats(userId: String) = withContext(Dispatchers.IO) {
+    override suspend fun initializeUserStats(userId: String) = withContext(Dispatchers.IO) {
         if (userId.isBlank()) return@withContext
         val isCloudUser = isFirebaseReady && !userId.startsWith("demo_") && firebaseAuth?.currentUser?.uid == userId
         val db = firestoreDb
@@ -412,14 +412,14 @@ class InvoiceRepository(
 
     // --- Invoices Data Access ---
 
-    fun getInvoices(): Flow<List<Invoice>> {
+    override fun getInvoices(): Flow<List<Invoice>> {
         val user = _currentUser.value ?: return flow { emit(emptyList()) }
         return invoiceDao.getInvoicesForUser(user.uid).map { entities ->
             entities.map { it.toInvoice() }
         }.flowOn(Dispatchers.IO)
     }
 
-    suspend fun insertInvoice(invoice: Invoice): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun insertInvoice(invoice: Invoice): Result<Unit> = withContext(Dispatchers.IO) {
         val uid = _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid
             ?: return@withContext Result.failure(IllegalStateException("Používateľ nie je prihlásený."))
 
@@ -494,7 +494,7 @@ class InvoiceRepository(
         Result.success(Unit)
     }
 
-    suspend fun deleteInvoice(id: String) = withContext(Dispatchers.IO) {
+    override suspend fun deleteInvoice(id: String) = withContext(Dispatchers.IO) {
         val uid = _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid ?: return@withContext
         val existing = invoiceDao.getInvoiceByIdForUser(id, uid)
         ReceiptImageProcessor.deleteArchivedReceipt(appContext, existing?.imageUrl)
@@ -519,14 +519,14 @@ class InvoiceRepository(
 
     // --- User Statistics & Atomic Credit Reservations ---
 
-    fun getUserStatsFlow(): Flow<UserStats> {
+    override fun getUserStatsFlow(): Flow<UserStats> {
         val user = _currentUser.value ?: return flow { emit(UserStats()) }
         return userStatsDao.getUserStatsFlow(user.uid).map { entity ->
             entity?.toUserStats() ?: UserStats(userId = user.uid)
         }.flowOn(Dispatchers.IO)
     }
 
-    suspend fun reserveScanCredit(ownerUid: String): CreditReservationResult = creditMutex.withLock {
+    override suspend fun reserveScanCredit(ownerUid: String): CreditReservationResult = creditMutex.withLock {
         withContext(Dispatchers.IO) {
             val db = firestoreDb
             val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
@@ -586,73 +586,77 @@ class InvoiceRepository(
         }
     }
 
-    suspend fun commitScanReservation(ownerUid: String, reservationId: String) = creditMutex.withLock {
-        withContext(Dispatchers.IO) {
-            val db = firestoreDb
-            val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
-            if (isCloudUser && db != null) {
-                val userRef = db.collection("users").document(ownerUid)
-                try {
-                    db.runTransaction { tx ->
-                        val snap = tx.get(userRef)
-                        if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
-                            tx.update(
-                                userRef,
-                                mapOf(
-                                    "activeReservationId" to null,
-                                    "updatedAt" to FieldValue.serverTimestamp()
+    override suspend fun commitScanReservation(ownerUid: String, reservationId: String) {
+        creditMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val db = firestoreDb
+                val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
+                if (isCloudUser && db != null) {
+                    val userRef = db.collection("users").document(ownerUid)
+                    try {
+                        db.runTransaction { tx ->
+                            val snap = tx.get(userRef)
+                            if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
+                                tx.update(
+                                    userRef,
+                                    mapOf(
+                                        "activeReservationId" to null,
+                                        "updatedAt" to FieldValue.serverTimestamp()
+                                    )
                                 )
-                            )
-                        }
-                    }.await()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
+                            }
+                        }.await()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
+                    }
                 }
             }
         }
     }
 
-    suspend fun rollbackScanReservation(ownerUid: String, reservationId: String) = creditMutex.withLock {
-        withContext(Dispatchers.IO) {
-            val db = firestoreDb
-            val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
-            if (isCloudUser && db != null) {
-                val userRef = db.collection("users").document(ownerUid)
-                try {
-                    val rolledBack = db.runTransaction { tx ->
-                        val snap = tx.get(userRef)
-                        if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
-                            val currentCredits = snap.getLong("credits")?.toInt() ?: 0
-                            tx.update(
-                                userRef,
-                                mapOf(
-                                    "credits" to (currentCredits + 1),
-                                    "activeReservationId" to null,
-                                    "updatedAt" to FieldValue.serverTimestamp()
+    override suspend fun rollbackScanReservation(ownerUid: String, reservationId: String) {
+        creditMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val db = firestoreDb
+                val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
+                if (isCloudUser && db != null) {
+                    val userRef = db.collection("users").document(ownerUid)
+                    try {
+                        val rolledBack = db.runTransaction { tx ->
+                            val snap = tx.get(userRef)
+                            if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
+                                val currentCredits = snap.getLong("credits")?.toInt() ?: 0
+                                tx.update(
+                                    userRef,
+                                    mapOf(
+                                        "credits" to (currentCredits + 1),
+                                        "activeReservationId" to null,
+                                        "updatedAt" to FieldValue.serverTimestamp()
+                                    )
                                 )
-                            )
-                            true
-                        } else {
-                            false
+                                true
+                            } else {
+                                false
+                            }
+                        }.await()
+                        if (rolledBack) {
+                            val local = userStatsDao.getUserStats(ownerUid)
+                            if (local != null) {
+                                userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
+                            }
                         }
-                    }.await()
-                    if (rolledBack) {
-                        val local = userStatsDao.getUserStats(ownerUid)
-                        if (local != null) {
-                            userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
-                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
-                }
-            } else {
-                val local = userStatsDao.getUserStats(ownerUid)
-                if (local != null) {
-                    userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
+                } else {
+                    val local = userStatsDao.getUserStats(ownerUid)
+                    if (local != null) {
+                        userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
+                    }
                 }
             }
         }
@@ -660,7 +664,7 @@ class InvoiceRepository(
 
     // --- Account Deletion (BF-17) ---
 
-    suspend fun deleteAccount(targetUid: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun deleteAccount(targetUid: String?): Result<Unit> = withContext(Dispatchers.IO) {
         val uid = targetUid ?: _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid
             ?: return@withContext Result.failure(IllegalStateException("Žiadny prihlásený účet na vymazanie."))
 
