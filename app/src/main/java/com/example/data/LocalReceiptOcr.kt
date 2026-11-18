@@ -1,6 +1,7 @@
 package com.example.data
 
 import android.graphics.Bitmap
+import androidx.core.graphics.scale
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -59,7 +60,7 @@ internal object LocalReceiptOcr : InvoiceAiExtractor {
         }
         try {
             val ratio = 1600.0 / max(bitmap.width, bitmap.height).coerceAtLeast(1600)
-            val scaled = Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).roundToInt().coerceAtLeast(1),
+            val scaled = bitmap.scale((bitmap.width * ratio).roundToInt().coerceAtLeast(1),
                 (bitmap.height * ratio).roundToInt().coerceAtLeast(1), true)
             // ML Kit Tasks are not cancelled by coroutine cancellation. Own the input until completion.
             owned = if (scaled === bitmap) bitmap.copy(Bitmap.Config.ARGB_8888, false) else scaled
