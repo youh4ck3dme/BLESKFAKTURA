@@ -84,7 +84,7 @@ class InvoiceViewModelScanTest {
 
     @Test
     fun rejectedScan_refundsExactlyOnce() = runTest(dispatcher) {
-        val repository = FakeInvoiceDataGateway()
+        val repository = FakeInvoiceDataGateway().apply { firebaseModeEnabled = false }
         val vm = viewModel(repository, InvoiceAiExtractor { AiExtractionResult.ServiceError("AI analýza sa nepodarila.") })
         vm.scanInvoiceImage(bitmap)
         runCurrent()
@@ -93,6 +93,33 @@ class InvoiceViewModelScanTest {
         assertEquals(1, repository.rollbackCalls)
         assertEquals(0, repository.commitCalls)
         assertTrue((vm.scanState.value as ScanUiState.Error).message.contains("Kredit bol vrátený."))
+    }
+
+    @Test
+    fun cloudRollbackUnitReturn_doesNotClaimConfirmedRefundForTypedOrUnexpectedError() = runTest(dispatcher) {
+        for (unexpectedError in listOf(false, true)) {
+            val ledger = FakeInvoiceDataGateway().apply { firebaseModeEnabled = true }
+            var rollbackRequests = 0
+            val repository = object : InvoiceDataGateway by ledger {
+                override suspend fun rollbackScanReservation(ownerUid: String, reservationId: String) {
+                    // Cloud gateway returns Unit even when the remote credit update failed.
+                    rollbackRequests++
+                }
+            }
+            val vm = viewModel(repository, InvoiceAiExtractor {
+                if (unexpectedError) throw IllegalStateException("SECRET_MARKER")
+                AiExtractionResult.ServiceError("Analýza zlyhala.")
+            })
+            vm.scanInvoiceImage(bitmap)
+            runCurrent()
+            assertEquals(1, rollbackRequests)
+            assertEquals(9, ledger.currentStatsSnapshot().credits)
+            val message = (vm.scanState.value as ScanUiState.Error).message
+            assertFalse(message.contains("Kredit bol vrátený."))
+            assertTrue(message.contains("Vrátenie kreditu bolo vyžiadané."))
+            assertTrue(message.contains("Stav kreditu overte po synchronizácii."))
+            assertFalse(message.contains("SECRET_MARKER"))
+        }
     }
 
     @Test
@@ -304,4 +331,21 @@ class InvoiceViewModelScanTest {
         assertTrue(error != null && !error!!.contains("MARKER"))
         assertTrue(repository.currentInvoicesSnapshot().isEmpty())
     }
+
+    @Test
+    fun failedAccountDeletion_reportsSafePartialFailureWithoutSdkContents() = runTest(dispatcher) {
+        val repository = FakeInvoiceDataGateway().apply {
+            deleteAccountResult = Result.failure(IllegalStateException("SECRET_MARKER RECEIPT_MARKER"))
+        }
+        val vm = viewModel(repository)
+        var succeeded = false
+        var message: String? = null
+        vm.deleteAccount(onSuccess = { succeeded = true }, onError = { message = it })
+        runCurrent()
+        assertFalse(succeeded)
+        assertTrue(message != null)
+        assertFalse(message!!.contains("MARKER"))
+        assertTrue(message!!.contains("Časť údajov už mohla byť odstránená."))
+    }
+
 }

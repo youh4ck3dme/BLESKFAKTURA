@@ -241,9 +241,10 @@ class InvoiceViewModel(
                 }
                 onSuccess()
             } else {
-                val msg = result.exceptionOrNull()?.localizedMessage
-                    ?: "Účet sa nepodarilo vymazať. Ak ste sa neprihlásili nedávno, odhláste sa, znova prihláste cez Google a operáciu zopakujte."
-                onError(msg)
+                onError(
+                    "Účet sa nepodarilo úplne vymazať. Časť údajov už mohla byť odstránená. " +
+                        "Skontrolujte pripojenie, prípadne sa znova prihláste, a výmaz zopakujte."
+                )
             }
         }
     }
@@ -350,6 +351,15 @@ class InvoiceViewModel(
                 }
             }
 
+            fun refundNote(): String {
+                if (!refunded) return ""
+                return if (!repository.isFirebaseMode() || requestUid.startsWith("demo_")) {
+                    " Kredit bol vrátený."
+                } else {
+                    " Vrátenie kreditu bolo vyžiadané. Stav kreditu overte po synchronizácii."
+                }
+            }
+
             try {
                 _scanState.value = ScanUiState.Scanning("Bleskovo kontrolujem kredity...")
                 // A reservation can finish after cancellation. Obtain its ID so the
@@ -406,8 +416,7 @@ class InvoiceViewModel(
                                 is AiExtractionResult.ServiceError -> result.message
                                 else -> error("Unhandled AI result")
                             }
-                            val refundNote = if (refunded) " Kredit bol vrátený." else ""
-                            _scanState.value = ScanUiState.Error("$message$refundNote")
+                            _scanState.value = ScanUiState.Error("$message${refundNote()}")
                         }
                     }
                 }
@@ -417,9 +426,8 @@ class InvoiceViewModel(
                 refundCredit()
                 Log.e("InvoiceViewModel", "Invoice scan failed: ${e.javaClass.simpleName}")
                 if (ownsScan()) {
-                    val refundNote = if (refunded) " Kredit bol vrátený." else ""
                     _scanState.value = ScanUiState.Error(
-                        "Neočakávaná chyba pri spracovaní dokladu. Skúste to prosím znova.$refundNote"
+                        "Neočakávaná chyba pri spracovaní dokladu. Skúste to prosím znova.${refundNote()}"
                     )
                 }
             } finally {

@@ -221,7 +221,11 @@ fun SettingsScreen(
                             )
                         }
                         Text(
-                            text = "Vaše doklady sú uložené pod vaším Google účtom v izolovanom Firestore priestore a v súkromnom úložisku zariadenia (bez Android záloh). Snímky odoslané na AI vyťaženie sa nepoužívajú na reklamu.",
+                            text = if (currentUser?.uid?.startsWith("demo_") == true) {
+                                "Demo účet uchováva doklady v tomto zariadení. Pri AI analýze sa fotografia odošle externej službe."
+                            } else {
+                                "Doklady sa ukladajú v tomto zariadení a synchronizujú s prihláseným účtom. Pri AI analýze sa fotografia odošle externej službe."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -303,7 +307,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            text = "Trvalo odstráni váš profil, všetky faktúry v cloude aj na zariadení, lokálne snímky dokladov a účet Firebase Auth.",
+                            text = "Spustí výmaz profilu, dokladov a priradených snímok. Cloudový výmaz vyžaduje pripojenie a môže vyžadovať nové prihlásenie. Technické záznamy o nákupoch sa týmto postupom nemažú.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
@@ -370,7 +374,7 @@ fun SettingsScreen(
             onDismissRequest = { if (!isDeleting) showDeleteConfirm = false },
             title = { Text("Natrvalo vymazať účet?", fontWeight = FontWeight.Bold) },
             text = {
-                Text("Táto akcia je nevratná. Všetky uložené doklady, štatistiky, zostávajúce kredity a snímky budú natrvalo odstránené.")
+                Text("Táto akcia je nevratná. Po úspešnom dokončení sa odstráni účet, doklady, štatistiky a zostávajúce kredity. Pri chybe môže byť výmaz čiastočný. Technické záznamy o nákupoch zostávajú zachované.")
             },
             confirmButton = {
                 Button(

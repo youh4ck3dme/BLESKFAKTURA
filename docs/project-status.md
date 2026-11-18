@@ -39,12 +39,19 @@ Backend prešiel, Android sa vtedy nespustil a release bol preskočený; nejde o
 
 ## Overenie tejto údržby
 
+Prvý kompletný beh: [CI 44253693317](https://github.com/youh4ck3dme/BLESKFAKTURA/actions/runs/44253693317),
+head **71aaddb3fc4ee7f97459b32b1023cc760b5db0f1**, 18. 11. 2026. Nasledujúca tabuľka
+je dôkazom tejto konkrétnej revízie. Následné spresnenia hlášok a ich regresné testy
+majú vlastný výsledok pri aktuálnom head v [draft PR #5](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/5);
+starý zelený beh sa nepreberá ako dôkaz nového kódu.
+
 | Kontrola | Stav | Rozsah |
 | --- | --- | --- |
 | Backend | PASS | Lokálne: uzamknutá inštalácia, TypeScript build, 10/10 verifier testov |
-| Android regresie, celý unit suite, lint, debug APK | NOT VERIFIED | Výsledok sa doplní po CI tejto vetvy |
-| Dokumentačné odkazy a shell vstupy | NOT VERIFIED | Kontroly sa doplnia po dokončení úprav |
-| Pôvodné drafty | NOT VERIFIED | Kontrolné súčty sa opätovne porovnajú pri odovzdaní |
+| Android regresie a celý unit suite | PASS | 89 testov / 15 suites, 0 failures/errors/skipped v uvedenom CI |
+| Lint a debug APK | PASS | 0 errors/fatal, 61 warnings a 1 hint; assembleDebug úspešný |
+| Dokumentačné odkazy a shell vstupy | PASS | 53 lokálnych odkazov; syntax, executable bits a helper preflight; aj negatívna kontrola chýbajúceho cieľa/fragmentu |
+| Pôvodné drafty | PASS | Zhodné SHA-256 štyroch súborov, git status aj cached/working diff oproti vstupu |
 | Fyzický telefón / fotoaparát / Google sign-in | NOT VERIFIED | V tejto revízii sa nespúšťajú |
 | Živý cloudový ledger, Play nákup a distribuovaný release | NOT VERIFIED | Lokálne fakes/emulátory ich nenahrádzajú |
 | AI v novej Appetize relácii | NOT VERIFIED | Každá relácia má vlastnú debug identitu |
@@ -52,12 +59,37 @@ Backend prešiel, Android sa vtedy nespustil a release bol preskočený; nejde o
 Preskočený release nie je PASS. CI PR zámerne nedostáva živú Firebase konfiguráciu
 ani signing secrets; jeho APK slúži na demo a automatizované lokálne testy.
 
+### Vyhodnotenie lintu
+
+Existujúce upozornenia sa nepotláčali. Z 61 warnings je 39 návrhov novších verzií
+Gradle/pluginov/závislostí; plošná aktualizácia bez kompatibilitného overenia nie je
+súčasťou údržby. Ďalej sú tu 2 odporúčania AndroidX ExifInterface, 1 OldTargetApi,
+6 odporúčaní ikon, 1 nepoužitý resource a 12 štýlových KTX/label odporúčaní.
+Hint sa týka inicializácie poľa. Nejde o dôkaz aktuálneho pádu; prípadné zmeny SDK,
+Exif podpory a cieľovej platformy potrebujú cielené regresné/runtime overenie.
+
+### Pokrytie auditovaných oblastí
+
+| Oblasť | Rozhodnutie a hranica dôkazu |
+| --- | --- |
+| Kamera a import | Zachovať TakePicture/Photo Picker a bounded decode; fyzické povolenia, odmietnutie a orientácie fotografií NOT VERIFIED |
+| Validácia dát, centy a dátumy | Zachovať existujúce validácie; príslušné unit testy sú súčasťou uvedeného CI |
+| AI, timeout, zrušenie a retry | Zachovať AI service; opraviť rezerváciu a vlastníctvo stavu; fakes/regresie PASS, živý cloud NOT VERIFIED |
+| Uloženie a export | Opraviť neúspešný scan save a stabilné ID; PDF testy PASS, zdieľanie na telefóne NOT VERIFIED |
+| Dashboard a čakajúce nákupy | Zachovať nový main a jeho regresie; žiadne pripísanie nákupu bez overenia |
+| Súkromie a účet | Redakcia diagnostiky a presnejšie hlášky; retencia a kompletný serverový výmaz zostávajú blokéry |
+| Backend a nákupy | Implementácia ponechaná, 10 testov PASS; deployment a skutočný nákup NOT VERIFIED |
+| GitHub, CI a návody | Opravené vstupy, odkazy a historické tvrdenia; staré PR sa posudzujú samostatne |
+
 ## Zostávajúce funkčné obmedzenia
 
 - Cloudová chyba rezervácie sa v repository zatiaľ mapuje na `InsufficientCredits`;
   UI preto nemusí rozlíšiť nedostatok kreditu od chyby siete/pravidiel.
 - Lokálny demo ledger neuchováva perzistentné identifikátory rezervácií ako cloud.
   Obnova po násilnom ukončení procesu a súbežné cloudové zariadenia nie sú overené.
+- Cloudový rollback má zatiaľ návratový typ Unit a môže interne spracovať chybu bez
+  potvrdenia zmeny zostatku. UI preto potvrdzuje iba vyžiadanie refundu; potvrdený
+  výsledok vyžaduje synchronizovaný stav účtu a živý test.
 - Room zápis a synchronizácia nie sú distribuovaná transakcia. Chybu cloudového
   zápisu treba overiť aj pri obnove spojenia a snapshot listeneroch.
 - Odhlásenie neodstraňuje všetky archivované fotografie. Výmaz účtu je viac krokov
@@ -96,5 +128,10 @@ K začiatku revízie: žiadne issues, tagy, releasy alebo milestones. Otvorené 
   OCR/variantov. Potrebuje samostatné architektonické a funkčné review; nehromadí sa
   do tejto údržby.
 
-Vetvy po zlúčených PR #3/#4 sú kandidáti na voliteľné odstránenie po samostatnom
-rozhodnutí vlastníka. Táto revízia nemení vzdialené vetvy, nastavenia ani históriu.
+Na samostatné rozhodnutie o voliteľnom odstránení zostávajú tieto merged vetvy:
+
+- `codex/android-release-fixes-20261117` — zlúčené cez PR #3;
+- `codex/ai-deadline-privacy-jdk21-20261117` — zlúčené cez PR #4.
+
+Nič z uvedeného sa nemaže. Údržba pridáva iba vlastnú PR vetvu; nemení existujúce
+vzdialené vetvy, prístupy, ochranné nastavenia ani históriu.

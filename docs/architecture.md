@@ -23,7 +23,7 @@ je `applicationId = sk.bizagent.bleskovafaktura`. Zmena namespace nie je súčas
 4. Firebase AI Logic dostane obrázok a požiadavku na štruktúrovaný JSON.
    `InvoiceAiService` aktuálne používa `gemini-3.5-flash-lite`, MINIMAL thinking,
    limit 4096 výstupných tokenov a lokálny deadline 60 sekúnd.
-5. Platná odpoveď prejde do revízie; neúspech uvoľní rezerváciu. Zrušenie sa nesmie
+5. Platná odpoveď prejde do revízie; pri neúspechu sa vyžiada uvoľnenie rezervácie. Zrušenie sa nesmie
    zameniť za úspech ani zverejniť výsledok predchádzajúceho skenu do nového skenu.
 6. Používateľ upraví a potvrdí údaje. Fotografia sa archivuje lokálne, zápis ide cez
    repository. Revízia sa zatvorí po úspešnom výsledku uloženia; pri chybe zostane na opakovanie.
