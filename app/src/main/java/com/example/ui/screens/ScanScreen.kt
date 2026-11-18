@@ -901,7 +901,7 @@ fun ReviewScannedInvoiceForm(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 32.dp)
     ) {
-        item {
+        item(key = "preview") {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(20.dp),
@@ -939,7 +939,7 @@ fun ReviewScannedInvoiceForm(
         }
 
         validationError?.let { err ->
-            item {
+            item(key = "validation") {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     shape = RoundedCornerShape(12.dp),
@@ -957,7 +957,7 @@ fun ReviewScannedInvoiceForm(
             }
         }
 
-        item {
+        item(key = "supplier") {
             OutlinedTextField(
                 value = supplierName,
                 onValueChange = { supplierName = it; validationError = null },
@@ -968,7 +968,7 @@ fun ReviewScannedInvoiceForm(
             )
         }
 
-        item {
+        item(key = "business_ids") {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = ico,
@@ -990,7 +990,7 @@ fun ReviewScannedInvoiceForm(
             }
         }
 
-        item {
+        item(key = "amount_and_rate") {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = totalAmountStr,
@@ -1013,7 +1013,7 @@ fun ReviewScannedInvoiceForm(
             }
         }
 
-        item {
+        item(key = "vat") {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1047,7 +1047,7 @@ fun ReviewScannedInvoiceForm(
             }
         }
 
-        item {
+        item(key = "dates") {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = issueDate,
@@ -1070,7 +1070,7 @@ fun ReviewScannedInvoiceForm(
             }
         }
 
-        item {
+        item(key = "category_and_paid") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1132,7 +1132,7 @@ fun ReviewScannedInvoiceForm(
             }
         }
 
-        item {
+        item(key = "description") {
             OutlinedTextField(
                 value = description,
                 onValueChange = { description = it },
@@ -1142,7 +1142,7 @@ fun ReviewScannedInvoiceForm(
             )
         }
 
-        item {
+        item(key = "actions") {
             Spacer(modifier = Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
