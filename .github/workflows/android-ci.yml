@@ -228,10 +228,13 @@ jobs:
       - name: Run real bundled OCR with device networking disabled
         run: |
           sudo chmod a+rw /dev/kvm
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/ocr-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd --name blesk_ocr_test --package 'system-images;android-30;google_apis;x86_64' --device pixel_2
-          "$ANDROID_HOME/emulator/emulator" -avd blesk_ocr_test -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/ocr-emulator.log" 2>&1 &
+          test -s "$ANDROID_AVD_HOME/blesk_ocr_test.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -avd blesk_ocr_test -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader -feature -Vulkan -memory 2048 -cores 2 > "$RUNNER_TEMP/ocr-emulator.log" 2>&1 &
           emulator_pid=$!
-          trap 'adb -e emu kill >/dev/null 2>&1 || true; kill "$emulator_pid" 2>/dev/null || true' EXIT
+          trap 'rg --max-count 12 "ERROR|PANIC|Unknown GPU|Unsupported GPU|error while loading" "$RUNNER_TEMP/ocr-emulator.log" || true; adb -e emu kill >/dev/null 2>&1 || true; kill "$emulator_pid" 2>/dev/null || true' EXIT
           booted=false
           for attempt in $(seq 1 120); do
             if [[ "$(adb -e shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == '1' ]]; then booted=true; break; fi
