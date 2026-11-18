@@ -103,6 +103,7 @@ import java.math.BigDecimal
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -770,12 +771,20 @@ fun ScanScreen(
                         onConfirm = { invoice ->
                             if (isSaving) return@ReviewScannedInvoiceForm
                             isSaving = true
-                            stagedUriString = null
-                            stagedBitmap = null
-                            viewModel.saveScannedInvoice(invoice, state.bitmap) {
-                                isSaving = false
-                                onNavigateBack()
-                            }
+                            viewModel.saveScannedInvoice(
+                                invoice = invoice,
+                                bitmap = state.bitmap,
+                                onError = { message ->
+                                    isSaving = false
+                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                },
+                                onSaved = {
+                                    isSaving = false
+                                    stagedUriString = null
+                                    stagedBitmap = null
+                                    onNavigateBack()
+                                }
+                            )
                         }
                     )
                 }
@@ -846,6 +855,8 @@ fun ReviewScannedInvoiceForm(
     onCancel: () -> Unit,
     onConfirm: (Invoice) -> Unit
 ) {
+    // A retry after a partial cloud failure must update the same local document.
+    val invoiceId = rememberSaveable(extracted) { UUID.randomUUID().toString() }
     val initialTotalCents = remember(extracted) {
         SlovakFinanceUtils.doubleToCents(extracted.totalAmount)
     }
@@ -1203,6 +1214,7 @@ fun ReviewScannedInvoiceForm(
 
                         onConfirm(
                             Invoice(
+                                id = invoiceId,
                                 supplierName = trimmedSupplier,
                                 ico = ico.trim().ifBlank { null },
                                 dic = dic.trim().ifBlank { null },

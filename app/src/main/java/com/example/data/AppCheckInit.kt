@@ -13,7 +13,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
             FirebaseApp.initializeApp(context)
         }
         installAppCheckProvider(context, intent)
-    } catch (e: Exception) {
-        Log.e(TAG, "Failed to initialize Firebase App Check", e)
+    } catch (_: Exception) {
+        Log.e(TAG, "Failed to initialize Firebase App Check")
     }
 }
