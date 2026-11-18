@@ -89,17 +89,25 @@ backend() {
   pnpm --dir functions test
 }
 
+select_java() {
+  # Match build-local-debug.sh: use an explicit JAVA_HOME or discover javac.
+  if [[ -z "${JAVA_HOME:-}" ]]; then
+    local java_compiler
+    java_compiler="$(command -v javac || true)"
+    [[ -n "$java_compiler" ]] || fail 'Select JDK 21+ with JAVA_HOME or place javac on PATH.'
+    export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$java_compiler")")")"
+  fi
+  [[ -x "$JAVA_HOME/bin/java" ]] || fail 'JAVA_HOME must point to a JDK 21+ installation.'
+  local java_major
+  java_major="$("$JAVA_HOME/bin/java" -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -1)"
+  [[ "$java_major" =~ ^[0-9]+$ && "$java_major" -ge 21 ]] || fail 'Select JDK 21+ for Android SDK 36 and Firebase emulators.'
+}
+
 android() {
   require_space "$ROOT" 1
   # A lower bound to catch a full disk; cold dependency downloads need more room.
   require_space "${GRADLE_USER_HOME:-$ROOT/../gradle-cache}" 1
-  need java
-  # CLI 15 requires Java 21+. JAVA_HOME can select it; the existing build script handles SDK/cache.
-  local java_cmd=java
-  [[ -z "${JAVA_HOME:-}" ]] || java_cmd="$JAVA_HOME/bin/java"
-  local java_major
-  java_major="$("$java_cmd" -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -1)"
-  [[ "$java_major" =~ ^[0-9]+$ && "$java_major" -ge 21 ]] || fail 'Select JDK 21+ for Firebase emulators with JAVA_HOME.'
+  select_java
   firebase_cli emulators:exec --only firestore,auth --project demo-no-project \
     --config "$ROOT/firebase.json" './scripts/build-local-debug.sh'
 }
@@ -118,7 +126,7 @@ signing_preflight() {
 aab() {
   require_space "$ROOT" 1
   require_space "${GRADLE_USER_HOME:-$ROOT/../gradle-cache}" 1
-  export JAVA_HOME="${JAVA_HOME:-$ROOT/../toolchains/jdk17/usr/lib/jvm/java-17-openjdk-amd64}"
+  select_java
   export ANDROID_HOME="${ANDROID_HOME:-$ROOT/../android-sdk}"
   export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$ROOT/../gradle-cache}"
   ./gradlew :app:lintRelease :app:bundleRelease --no-daemon --console=plain

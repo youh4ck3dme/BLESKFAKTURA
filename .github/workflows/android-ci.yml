@@ -23,6 +23,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Validate documentation and build entrypoints
+        run: |
+          python3 scripts/check-docs.py
+          bash -n gradlew release.sh scripts/build-local-debug.sh
+          test -x gradlew
+          test -x release.sh
+          test -x scripts/build-local-debug.sh
+
       - name: Set up JDK 21
         uses: actions/setup-java@v6
         with:
