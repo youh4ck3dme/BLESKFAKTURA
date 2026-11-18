@@ -139,12 +139,13 @@ class SettingsScreenTest {
         // Trigger GDPR support mailto intent
         composeTestRule.onNode(hasScrollToIndexAction())
             .performScrollToNode(hasTestTag("support_email_button"))
+        composeTestRule.onNodeWithText("Kontaktovať podporu / GDPR (support@vorkei.com)").assertIsDisplayed()
         composeTestRule.onNodeWithTag("support_email_button").performClick()
         composeTestRule.waitForIdle()
 
         val emailIntent = Shadows.shadowOf(composeTestRule.activity).nextStartedActivity
         assertEquals(Intent.ACTION_SENDTO, emailIntent?.action)
-        assertEquals("mailto:erikbabcan@gmail.com", emailIntent?.dataString)
+        assertEquals("mailto:support@vorkei.com", emailIntent?.dataString)
         assertEquals(
             "Blesková Faktúra — GDPR / Podpora",
             emailIntent?.getStringExtra(Intent.EXTRA_SUBJECT)
