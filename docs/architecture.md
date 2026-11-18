@@ -71,3 +71,47 @@ snímky, Firestore a potom Auth; pri chybe môže byť čiastočný.
 Zálohovanie a prenos citlivých súborov sú obmedzené manifestom a XML pravidlami.
 Tieto technické opatrenia nie sú potvrdením právnej deklarácie ani účinného
 vymazania na všetkých zariadeniach; pozri [stav projektu](project-status.md).
+
+
+<a id="lokalne-ocr"></a>
+
+## Lokálne OCR
+
+Používateľ zapína lokálne OCR výslovne na obrazovke pripravenej fotografie.
+Predvolený cloudový režim zostáva zachovaný. Lokálny tok používa
+`LocalReceiptOcr` a zabalený latinský model `com.google.mlkit:text-recognition:16.0.1`;
+žiadny automatický prechod z lokálnej chyby do cloudového AI neexistuje.
+`InvoiceViewModel` pri lokálnom čítaní nevolá rezerváciu, commit ani refund kreditu.
+Vyžaduje sa aktuálny profil; release naďalej neposkytuje debug demo prihlásenie.
+Uloženie do Room/Firestore sa riadi existujúcim profilom, nie voľbou OCR.
+
+Parser podporuje EUR doklady, slovenské a vybrané medzinárodné formáty čísiel/dátumov,
+rozlišuje dodávateľa a odberateľa a preferuje označenú sumu k úhrade.
+Pri nejednoznačných sumách alebo dátumoch necháva pole na ručnú kontrolu.
+Záporné/nulové explicitné sumy, sumy nad 1 000 000 a cudzie meny odmieta;
+neprepočítava ich na EUR. DPH sa z OCR celkovej sumy neodhaduje. Revízia zachováva
+neznámu sadzbu a sumu DPH ako null; používateľ môže doplniť hodnoty alebo výslovne
+použiť prepočet. Varovania sú súčasťou revízie, surový rozpoznaný text sa neloguje.
+
+Vstup parsera je ohraničený na 200 000 znakov, 3000 riadkov a 2000 znakov na riadok.
+Obrázok zostáva ohraničený na 1600 px na dlhšej strane; rozmazanie, perspektíva,
+drobné písmo, viac dokladov na fotografii a zložité stĺpce môžu znížiť presnosť.
+Zachovanie limitu pamäte nie je dôkaz bezchybného rozpoznávania všetkých bločkov.
+SDK dostáva vlastnú kópiu bitmapy. Coroutine cancellation sa propaguje; keďže
+zrušenie await nezruší natívny Task, kópia a recognizer sa uvoľnia až po skončení
+Tasku. Pokiaľ starý natívny Task dobieha, ďalší lokálny pokus vráti čitateľnú
+chybu bez vytvorenia ďalšieho recognizera alebo kópie obrázka. Vlastný 60-sekundový deadline vracia Timeout, nadradený deadline sa propaguje.
+
+Podľa [dokumentácie modelu](https://developers.google.com/ml-kit/vision/text-recognition/v2/android)
+je model zabalený priamo v aplikácii, čo zväčšuje APK. Rozpoznávané vstupy a výsledky
+zostávajú podľa [ML Kit privacy](https://developers.google.com/ml-kit/terms) v zariadení,
+ale SDK môže odosielať diagnostické a prevádzkové metriky. Pred vydaním treba
+zosúladiť Play Data safety podľa [ML Kit disclosure](https://developers.google.com/ml-kit/android-data-disclosure).
+Tvrdenie „celá aplikácia nikdy nekomunikuje so sieťou“ preto neplatí.
+
+Testy odlišujú parser nad syntetickým textom, SDK Task seam, ViewModel/Compose
+s fake recognizerom a skutočný zabalený model v Android instrumentácii bez siete.
+Natívny CI test používa syntetický tlačený doklad a jeho round-trip cez skutočné Room a generovanie/otvorenie PDF; nepotvrdzuje fyzický fotoaparát,
+reálne účtovné doklady, Google OAuth ani cloudové pripísanie kreditu.
+
+API30 instrumentácia nepotvrdzuje 16 KB kompatibilitu natívnych knižníc ani podpísaný Play release; tie zostávajú samostatnými release kontrolami.

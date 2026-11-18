@@ -32,11 +32,17 @@ nejde o potvrdenie stavu v Play Console.
 
 | Režim | Čo možno overovať |
 | --- | --- |
-| Debug bez Firebase konfigurácie, napríklad PR artefakt z CI | Lokálne demo rozhranie a Room. Živý AI sken ani Google prihlásenie nie sú nakonfigurované. |
+| Debug bez Firebase konfigurácie, napríklad PR artefakt z CI | Lokálne demo, Room a výslovne zvolené lokálne OCR so zabaleným modelom. Živý cloudový AI sken ani Google prihlásenie nie sú nakonfigurované. |
 | Debug s lokálnym `google-services.json` | Živé Firebase volania po správnej konfigurácii a súkromnej registrácii App Check pre danú inštaláciu. Demo kredity zostávajú lokálne. |
 | Release | Play Integrity a pôvodná podpisová identita; demo prihlásenie je zablokované. Play nákupy potrebujú samostatne overený backend a distribúciu. |
 
-AI skener používa Firebase AI Logic, model `gemini-3.5-flash-lite`, MINIMAL thinking,
+V skeneri možno výslovne zapnúť **Lokálne OCR · bez kreditu**. Model sa dodáva v APK;
+rozpoznanie fotografie nevyžaduje cloudové AI ani prvotné stiahnutie modelu.
+Výsledky sú návrhy na kontrolu, chýbajúca DPH sa nedopĺňa odhadom.
+Cloudový účet môže uložené údaje ďalej synchronizovať; demo ich ukladá lokálne.
+Limity, diagnostické metriky SDK a hranice testov sú v [architektúre](docs/architecture.md#lokalne-ocr).
+
+Cloudový AI skener používa Firebase AI Logic, model `gemini-3.5-flash-lite`, MINIMAL thinking,
 limit 4096 výstupných tokenov a aplikačný deadline 60 sekúnd. Zdrojom je
 [InvoiceAiService.kt](app/src/main/java/com/example/data/InvoiceAiService.kt);
 aplikácia nemá automatický prechod na iný model. Vlastný Gemini API kľúč v

@@ -41,6 +41,7 @@ data class UserInfo(
 sealed interface CreditReservationResult {
     data class Reserved(val reservationId: String) : CreditReservationResult
     data object UnlimitedSubscriber : CreditReservationResult
+    data object FreeLocalScan : CreditReservationResult
     data object InsufficientCredits : CreditReservationResult
     data object ScanAlreadyInProgress : CreditReservationResult
 }

@@ -332,7 +332,7 @@ fun InvoiceDetailDialog(
     var ico by remember { mutableStateOf(invoice.ico ?: "") }
     var dic by remember { mutableStateOf(invoice.dic ?: "") }
     var totalAmountStr by remember { mutableStateOf(SlovakFinanceUtils.formatCentsForInput(invoice.effectiveTotalCents())) }
-    var vatRateStr by remember { mutableStateOf((invoice.vatRate ?: 20.0).toString().replace('.', ',')) }
+    var vatRateStr by remember { mutableStateOf(invoice.vatRate?.toString()?.replace('.', ',').orEmpty()) }
     var vatAmountStr by remember {
         mutableStateOf(invoice.effectiveVatCents()?.let { SlovakFinanceUtils.formatCentsForInput(it) } ?: "")
     }
@@ -343,6 +343,10 @@ fun InvoiceDetailDialog(
     var description by remember { mutableStateOf(invoice.description ?: "") }
     var validationError by remember { mutableStateOf<String?>(null) }
 
+    val detailScrollState = rememberScrollState()
+    androidx.compose.runtime.LaunchedEffect(validationError) {
+        if (validationError != null) detailScrollState.animateScrollTo(0)
+    }
     var isMenuExpanded by remember { mutableStateOf(false) }
     val categories = listOf("Kancelária", "Cestovné", "Služby", "Technika", "Strava", "Iné")
 
@@ -383,7 +387,7 @@ fun InvoiceDetailDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(detailScrollState)
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -499,7 +503,7 @@ fun InvoiceDetailDialog(
                             onClick = {
                                 val totalDec = SlovakFinanceUtils.parseSlovakDecimal(totalAmountStr)
                                 val rateDec = SlovakFinanceUtils.parseSlovakDecimal(vatRateStr)
-                                if (totalDec != null && totalDec > BigDecimal.ZERO && rateDec != null && rateDec >= BigDecimal.ZERO) {
+                                if (totalDec != null && totalDec > BigDecimal.ZERO && totalDec <= BigDecimal(1_000_000) && rateDec != null && rateDec >= BigDecimal.ZERO && rateDec <= BigDecimal(100)) {
                                     val tc = SlovakFinanceUtils.bigDecimalToCents(totalDec)
                                     val vc = SlovakFinanceUtils.calculateVatCentsFromGross(tc, rateDec)
                                     vatAmountStr = SlovakFinanceUtils.formatCentsForInput(vc)
@@ -629,7 +633,7 @@ fun InvoiceDetailDialog(
                                 val totalCents = SlovakFinanceUtils.bigDecimalToCents(parsedAmount)
 
                                 val parsedRate = SlovakFinanceUtils.parseSlovakDecimal(vatRateStr)
-                                if (parsedRate == null || parsedRate < BigDecimal.ZERO || parsedRate > BigDecimal(100)) {
+                                if (vatRateStr.isNotBlank() && (parsedRate == null || parsedRate < BigDecimal.ZERO || parsedRate > BigDecimal(100))) {
                                     validationError = "Sadzba DPH musí byť v rozsahu 0 až 100 %."
                                     return@Button
                                 }
@@ -640,6 +644,10 @@ fun InvoiceDetailDialog(
                                     val parsedVat = SlovakFinanceUtils.parseSlovakDecimal(vatAmountStr)
                                     if (parsedVat == null || parsedVat < BigDecimal.ZERO) {
                                         validationError = "Neplatný formát sumy DPH."
+                                        return@Button
+                                    }
+                                    if (parsedVat > parsedAmount) {
+                                        validationError = "DPH nemôže presiahnuť celkovú sumu."
                                         return@Button
                                     }
                                     val vc = SlovakFinanceUtils.bigDecimalToCents(parsedVat)
@@ -672,7 +680,7 @@ fun InvoiceDetailDialog(
                                         dic = dic.trim().ifBlank { null },
                                         totalAmount = SlovakFinanceUtils.centsToDouble(totalCents),
                                         totalAmountCents = totalCents,
-                                        vatRate = parsedRate.toDouble(),
+                                        vatRate = parsedRate?.toDouble(),
                                         vatAmount = vatCents?.let { SlovakFinanceUtils.centsToDouble(it) },
                                         vatAmountCents = vatCents,
                                         issueDate = normIssue,

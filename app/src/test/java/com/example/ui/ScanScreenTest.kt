@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
@@ -88,7 +89,7 @@ class ScanScreenTest {
         composeTestRule.onAllNodesWithTag("fab_instant_camera_capture").assertCountEquals(0)
 
         // Clear staged file -> returns to source selection
-        composeTestRule.onNodeWithTag("clear_staged_file_button").performClick()
+        composeTestRule.onNodeWithTag("clear_staged_file_button").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("scan_camera_button").assertIsDisplayed()
@@ -116,7 +117,7 @@ class ScanScreenTest {
         composeTestRule.onNodeWithTag("scan_mock_sample_button").performClick()
         composeTestRule.mainClock.advanceTimeByFrame()
 
-        composeTestRule.onNodeWithTag("analyze_with_ai_button").performClick()
+        composeTestRule.onNodeWithTag("analyze_with_ai_button").performScrollTo().performClick()
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         composeTestRule.mainClock.advanceTimeByFrame()
 
@@ -170,7 +171,7 @@ class ScanScreenTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("scan_mock_sample_button").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("analyze_with_ai_button").performClick()
+        composeTestRule.onNodeWithTag("analyze_with_ai_button").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             vm.scanState.value is ScanUiState.Success
         }
@@ -230,7 +231,7 @@ class ScanScreenTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("scan_mock_sample_button").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("analyze_with_ai_button").performClick()
+        composeTestRule.onNodeWithTag("analyze_with_ai_button").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             vm.scanState.value is ScanUiState.Success
         }
@@ -282,7 +283,7 @@ class ScanScreenTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("scan_mock_sample_button").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("analyze_with_ai_button").performClick()
+        composeTestRule.onNodeWithTag("analyze_with_ai_button").performScrollTo().performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             vm.scanState.value is ScanUiState.Error
         }

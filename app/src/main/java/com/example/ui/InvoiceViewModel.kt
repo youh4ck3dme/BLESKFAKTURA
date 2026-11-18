@@ -16,6 +16,7 @@ import com.example.data.ExtractedInvoiceJson
 import com.example.data.Invoice
 import com.example.data.InvoiceAiExtractor
 import com.example.data.InvoiceAiService
+import com.example.data.LocalReceiptOcr
 import com.example.data.InvoiceDataGateway
 import com.example.data.InvoiceRepository
 import com.example.data.PlayBillingManager
@@ -113,7 +114,8 @@ class InvoiceViewModel(
         }.onFailure { e ->
             Log.w("InvoiceViewModel", "clearCredentialState skipped: ${e.message}")
         }
-    }
+    },
+    private val localOcrExtractor: InvoiceAiExtractor = LocalReceiptOcr
 ) : AndroidViewModel(application) {
     constructor(application: Application) : this(
         application = application,
@@ -321,7 +323,7 @@ class InvoiceViewModel(
         invalidateScan()
     }
 
-    fun scanInvoiceImage(bitmap: Bitmap) {
+    fun scanInvoiceImage(bitmap: Bitmap, localOcr: Boolean = false) {
         if (activeScanJob?.isActive == true) return
         val requestUid = currentUser.value?.uid ?: run {
             _scanState.value = ScanUiState.Error("Pred skenovaním sa musíte prihlásiť.")
@@ -361,11 +363,11 @@ class InvoiceViewModel(
             }
 
             try {
-                _scanState.value = ScanUiState.Scanning("Bleskovo kontrolujem kredity...")
+                _scanState.value = ScanUiState.Scanning(if (localOcr) "Pripravujem lokálne čítanie..." else "Bleskovo kontrolujem kredity...")
                 // A reservation can finish after cancellation. Obtain its ID so the
                 // finally block can refund it without starting another AI request.
                 val reservation = withContext(NonCancellable) {
-                    repository.reserveScanCredit(requestUid)
+                    if (localOcr) CreditReservationResult.FreeLocalScan else repository.reserveScanCredit(requestUid)
                 }
                 reservationId = (reservation as? CreditReservationResult.Reserved)?.reservationId
                 currentCoroutineContext().ensureActive()
@@ -387,12 +389,12 @@ class InvoiceViewModel(
                 }
 
                 progressJob = launch {
-                    for (message in scannerMessages) {
+                    for (message in if (localOcr) listOf("Čítam text v zariadení...", "Pripravujem údaje na kontrolu...") else scannerMessages) {
                         if (ownsScan()) _scanState.value = ScanUiState.Scanning(message)
                         delay(1200)
                     }
                 }
-                val result = aiExtractor.extractInvoiceData(bitmap)
+                val result = (if (localOcr) localOcrExtractor else aiExtractor).extractInvoiceData(bitmap)
                 currentCoroutineContext().ensureActive()
                 if (!ownsScan()) return@launch
                 when (result) {
@@ -412,7 +414,7 @@ class InvoiceViewModel(
                         if (ownsScan()) {
                             val message = when (result) {
                                 is AiExtractionResult.InvalidDocument -> result.message
-                                is AiExtractionResult.Timeout -> "AI analýza vypršala po 60 sekundách. Skúste to prosím znova."
+                                is AiExtractionResult.Timeout -> if (localOcr) "Lokálne čítanie vypršalo po 60 sekundách. Skúste to znova." else "AI analýza vypršala po 60 sekundách. Skúste to prosím znova."
                                 is AiExtractionResult.ServiceError -> result.message
                                 else -> error("Unhandled AI result")
                             }

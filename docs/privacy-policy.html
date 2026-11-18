@@ -50,6 +50,7 @@
 
   <section>
     <h2>2. Aké údaje aplikácia spracúva</h2>
+    <p>Lokálne OCR spracúva fotografiu v zariadení a neodosiela jej obsah cloudovému AI. ML Kit môže odosielať diagnostické a prevádzkové metriky vrátane údajov o zariadení, aplikácii, identifikátora inštalácie, konfigurácie a výkonnosti SDK. Uložené polia dokladu sa pri cloudovom účte naďalej synchronizujú. Pozri <a href="https://developers.google.com/ml-kit/android-data-disclosure">informácie o dátach ML Kit</a>.</p>
     <ul>
       <li><strong>Údaje účtu Google (Firebase Authentication):</strong> jedinečný identifikátor účtu (<code>UID</code>), e-mailová adresa, zobrazované meno a URL profilovej fotografie získané pri prihlásení cez Google Credential Manager.</li>
       <li><strong>Účtovné doklady a faktúry:</strong> názov dodávateľa, IČO, DIČ, dátum vystavenia a splatnosti, suma, DPH, sadzba DPH, mena, kategória, stav úhrady a poznámky.</li>
@@ -63,7 +64,7 @@
     <h2>3. Účel spracúvania a príjemcovia</h2>
     <ul>
       <li><strong>Autentifikácia a cloudová synchronizácia:</strong> Firebase Authentication a Cloud Firestore od Google. Kód a pravidlá izolujú údaje v priestore <code>users/{uid}</code>; aktuálne nasadenie a zmluvné údaje spracovateľov musí potvrdiť prevádzkovateľ.</li>
-      <li><strong>AI extrakcia údajov z dokladu:</strong> snímka sa odosiela cez TLS prostredníctvom Firebase AI Logic (Gemini) na vyťaženie účtovných polí. Aplikácia ju neukladá do Firestore. Spracúvanie a uchovávanie na strane poskytovateľa závisí od použitej služby a plánu; pred použitím skutočných dokladov treba overiť <a href="https://ai.google.dev/gemini-api/terms">aktuálne podmienky Gemini API</a>. Lokálne uloženie fotografie nie je zárukou jej nespracúvania externou AI službou.</li>
+      <li><strong>Cloudová AI extrakcia údajov z dokladu:</strong> snímka sa odosiela cez TLS prostredníctvom Firebase AI Logic (Gemini) na vyťaženie účtovných polí. Aplikácia ju neukladá do Firestore. Spracúvanie a uchovávanie na strane poskytovateľa závisí od použitej služby a plánu; pred použitím skutočných dokladov treba overiť <a href="https://ai.google.dev/gemini-api/terms">aktuálne podmienky Gemini API</a>. Lokálne uloženie fotografie nie je zárukou jej nespracúvania externou AI službou.</li>
       <li><strong>Nákupy a predplatné:</strong> klient Google Play Billing a implementovaný backend v regióne <code>europe-west1</code> počítajú s overením <code>purchaseToken</code> cez Google Play Developer API pred pripísaním nároku. Nasadenie a skutočný nákup nie sú týmto textom potvrdené.</li>
       <li><strong>Export PDF:</strong> súhrnný PDF výkaz vzniká lokálne v zariadení a zdieľa sa iba vtedy, keď používateľ aktívne zvolí export a cieľovú aplikáciu.</li>
     </ul>
@@ -83,7 +84,7 @@
     <ul>
       <li><strong>Účet a cloudové doklady (<code>users/{uid}/invoices/*</code>):</strong> výmaz spustíte v aplikácii cez <em>Nastavenia &rarr; Vymazať účet a všetky dáta</em>. Postup maže známe lokálne snímky a záznamy, cloudové doklady a profil, následne Firebase Auth účet. Vyžaduje pripojenie a prípadne nové prihlásenie; pri chybe môže zostať čiastočne dokončený. Kontakt pre žiadosť je na <a href="./account-deletion.html">stránke vymazania účtu</a>; prevádzkovateľ musí pred zverejnením potvrdiť postup a lehoty vybavenia.</li>
       <li><strong>Dočasné súbory na zariadení:</strong> PDF exporty v <code>cacheDir</code> sa čistia pri ďalšom exporte a odhlásení, bez automatického 24-hodinového časovača. Staré súbory fotoaparátu sa čistia pri ďalšom vytvorení snímky (vek nad 24 hodín), pri odhlásení alebo výmaze účtu.</li>
-      <li><strong>Snímka odoslaná na AI vyťaženie:</strong> prenáša sa jednorazovo za účelom vyťaženia polí dokladu; aplikácia obrázok neukladá do cloudovej databázy Firestore.</li>
+      <li><strong>Snímka odoslaná na cloudové AI vyťaženie:</strong> prenáša sa jednorazovo za účelom vyťaženia polí dokladu; aplikácia obrázok neukladá do cloudovej databázy Firestore.</li>
       <li><strong>Záznamy o overení platieb (<code>billingTokens</code>):</strong> serverová implementácia eviduje technické údaje na idempotenciu a prevenciu zneužitia. Klientsky výmaz účtu ich nemaže a v kóde nie je automatická lehota ich odstránenia. Konkrétnu dobu a právny dôvod uchovania musí prevádzkovateľ stanoviť pred spustením nákupov; tento návrh neustanovuje desaťročnú lehotu.</li>
     </ul>
   </section>

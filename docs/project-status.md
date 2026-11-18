@@ -42,7 +42,7 @@ Backend prešiel, Android sa vtedy nespustil a release bol preskočený; nejde o
 Prvý kompletný beh: [CI 44253693317](https://github.com/youh4ck3dme/BLESKFAKTURA/actions/runs/44253693317),
 head **71aaddb3fc4ee7f97459b32b1023cc760b5db0f1**, 18. 11. 2026. Nasledujúca tabuľka
 je dôkazom tejto konkrétnej revízie. Následné spresnenia hlášok a ich regresné testy
-majú vlastný výsledok pri aktuálnom head v [draft PR #5](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/5);
+majú vlastný výsledok pri aktuálnom head v [PR #5](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/5);
 starý zelený beh sa nepreberá ako dôkaz nového kódu.
 
 | Kontrola | Stav | Rozsah |
@@ -119,19 +119,33 @@ Exif podpory a cieľovej platformy potrebujú cielené regresné/runtime overeni
 
 ## GitHub inventúra a návrh ďalšieho postupu
 
-K začiatku revízie: žiadne issues, tagy, releasy alebo milestones. Otvorené PR:
+Pri pôvodnej revízii neboli issues, tagy, releasy alebo milestones. Aktualizácia
+18. 11. 2026:
 
-- [PR #1](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/1) cieli na inú vetvu než
-  main. Pred rozhodnutím porovnať pôvodný problém a dnešné API použitie; samotný
-  návrh desugaringu nie je dôkazom aktuálnej runtime chyby. Nezatvára sa automaticky.
-- [PR #2](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/2) obsahuje širšiu zmenu
-  OCR/variantov. Potrebuje samostatné architektonické a funkčné review; nehromadí sa
-  do tejto údržby.
+- [PR #1](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/1) bol s výslovným súhlasom
+  vlastníka zatvorený ako prekonaný. Cielil na `grokbranch`; aktuálny main pôvodné
+  problematické java.time API nepoužíva. Vetva zostala zachovaná.
+- [PR #5](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/5) je zlúčený do main.
+- [PR #2](https://github.com/youh4ck3dme/BLESKFAKTURA/pull/2) sa obnovuje nad aktuálnym
+  main ako výslovne voliteľné lokálne OCR popri cloudovom AI. Pôvodné commity
+  zostávajú v histórii; rozsah je znovu posúdený bez automatického prevzatia starých
+  backendových zmien a variantov. Výsledky každého aktuálneho head sú v jeho CI.
+
+## Rozšírenie lokálneho OCR
+
+Implementácia, obmedzenia a súkromie sú v [OCR architektúre](architecture.md#lokalne-ocr).
+Lokálna voľba neodpočítava kredit, neposiela fotografiu cloudovému AI a pri chybe
+na cloud automaticky neprechádza. OCR nenahrádza kontrolu účtovných údajov človekom.
+Revízia aj úprava zachovávajú neznámu DPH; parser nerozhoduje o zákonnej správnosti
+IČO/DIČ ani o daňovom režime. Instrumentácia testuje syntetický doklad bez siete,
+Room a natívne vytvorenie/otvorenie PDF. Fyzická kamera, reálne bločky a Play release
+zostávajú samostatnými kontrolami. Nové SDK vyžaduje zohľadnenie diagnostických
+metrík v právnych údajoch a Data safety pred vydaním.
 
 Na samostatné rozhodnutie o voliteľnom odstránení zostávajú tieto merged vetvy:
 
 - `codex/android-release-fixes-20261117` — zlúčené cez PR #3;
 - `codex/ai-deadline-privacy-jdk21-20261117` — zlúčené cez PR #4.
 
-Nič z uvedeného sa nemaže. Údržba pridáva iba vlastnú PR vetvu; nemení existujúce
-vzdialené vetvy, prístupy, ochranné nastavenia ani históriu.
+Vetvy sa nemažú. PR #2 sa aktualizuje normálnymi commitmi bez force push alebo
+prepisu histórie; prístupy ani ochranné nastavenia sa nemenia.

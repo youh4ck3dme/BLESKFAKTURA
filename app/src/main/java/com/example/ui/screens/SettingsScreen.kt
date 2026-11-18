@@ -222,9 +222,9 @@ fun SettingsScreen(
                         }
                         Text(
                             text = if (currentUser?.uid?.startsWith("demo_") == true) {
-                                "Demo účet uchováva doklady v tomto zariadení. Pri AI analýze sa fotografia odošle externej službe."
+                                "Demo účet uchováva doklady v tomto zariadení. Pri cloudovej AI analýze sa fotografia odošle externej službe. Lokálne OCR číta fotografiu v zariadení."
                             } else {
-                                "Doklady sa ukladajú v tomto zariadení a synchronizujú s prihláseným účtom. Pri AI analýze sa fotografia odošle externej službe."
+                                "Doklady sa ukladajú v tomto zariadení a synchronizujú s prihláseným účtom. Pri cloudovej AI analýze sa fotografia odošle externej službe. Lokálne OCR číta fotografiu v zariadení."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -355,7 +355,7 @@ fun SettingsScreen(
                         "Blesková Faktúra (sk.bizagent.bleskovafaktura)\nKontakt: $supportEmail\n\n" +
                             "1. Spracúvané údaje: Google identifikátor účtu (UID, e-mail, meno), účtovné doklady (dodávateľ, IČO/DIČ, dátumy, sumy, DPH) a snímky dokladov.\n\n" +
                             "2. Účel a bezpečnosť: Autentifikácia cez Google/Firebase Auth, cloudová synchronizácia vo Firestore (prístup prísne izolovaný na váš UID), jednorazová AI extrakcia cez Firebase AI Logic (chránené cez App Check / Play Integrity) a overenie nákupov Google Play Billing.\n\n" +
-                            "3. Lokálne údaje: PDF exporty sa čistia pri ďalšom exporte a odhlásení. Archivované fotografie zostávajú v súkromnom úložisku aplikácie; odhlásenie nezaručuje ich vymazanie.\n\n" +
+                            "3. Lokálne OCR: Rozpoznávanie fotografie prebieha v zariadení. ML Kit môže odosielať diagnostické a prevádzkové metriky. Ukladanie a synchronizácia dokladu závisia od typu účtu.\n\nLokálne údaje: PDF exporty sa čistia pri ďalšom exporte a odhlásení. Archivované fotografie zostávajú v súkromnom úložisku aplikácie; odhlásenie nezaručuje ich vymazanie.\n\n" +
                             "4. Výmaz údajov: Výmaz spustíte tu v Nastaveniach alebo oň požiadate e-mailom na $supportEmail. Cloudový výmaz vyžaduje pripojenie a môže vyžadovať nové prihlásenie. Pri chybe sa výmaz nemusí dokončiť; riaďte sa zobrazenou správou. Technické záznamy o overení nákupov sa týmto postupom nemažú.",
                         style = MaterialTheme.typography.bodySmall
                     )
