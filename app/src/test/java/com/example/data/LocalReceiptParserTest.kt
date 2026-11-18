@@ -59,7 +59,7 @@ class LocalReceiptParserTest {
         }
     }
     @Test fun foreignCurrencies_areNeverSilentlySavedAsEuro() {
-        for (s in listOf("CZK", "Kč", "USD", "GBP", "CHF", "PLN", "HUF")) {
+        for (s in listOf("CZK", "Kč", "USD", "GBP", "CHF", "PLN", "HUF", "SKK", "$", "£", "¥", "UAH", "₴")) {
             assertTrue(s, LocalReceiptParser.parse(receipt("Celkom 12,30 $s")) is AiExtractionResult.InvalidDocument)
         }
     }

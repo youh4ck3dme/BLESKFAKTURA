@@ -12,7 +12,7 @@ internal object LocalReceiptParser {
     private val marker = Regex("""\b(ICO|DIC|DPH|SPOLU|CELKOM|FAKTURA|DOKLAD|UCTENKA|TOTAL|INVOICE|RECEIPT|UHRAD[AEU])\b""")
     private val customer = Regex("""\b(ODBERATEL|ZAKAZNIK|CUSTOMER|BILL TO)\b""")
     private val supplierLabel = Regex("""\b(DODAVATEL|PREDAJCA|SUPPLIER)\s*:?\s*""")
-    private val foreignCurrency = Regex("""\b(CZK|USD|GBP|CHF|PLN|HUF|K[CČ])\b""", RegexOption.IGNORE_CASE)
+    private val foreignCurrency = Regex("""(?:\b(CZK|USD|GBP|CHF|PLN|HUF|SKK|SEK|NOK|DKK|RON|BGN|JPY|CNY|UAH|RUB|AUD|CAD|K[CČ])\b|[$£¥₴₽])""", RegexOption.IGNORE_CASE)
     private val nonTotal = Regex("""\b(BEZ DPH|ZAKLAD|SUBTOTAL|MEDZISUCET|VYDAVOK|VRATENE|ZAPLATENE|UHRADENE|HOTOVOST|KARTOU|CELKOM DPH|DPH CELKOM)\b""")
     private data class Candidate(val priority: Int, val amounts: List<BigDecimal>)
 

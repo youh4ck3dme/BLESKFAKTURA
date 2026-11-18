@@ -106,6 +106,8 @@ import java.util.Locale
 import java.util.UUID
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 
@@ -897,6 +899,10 @@ fun ReviewScannedInvoiceForm(
     var description by rememberSaveable { mutableStateOf(extracted.description ?: "") }
     var validationError by remember { mutableStateOf<String?>(null) }
 
+    val reviewListState = rememberLazyListState()
+    LaunchedEffect(validationError) {
+        if (validationError != null) reviewListState.animateScrollToItem(if (extracted.reviewWarnings.isEmpty()) 1 else 2)
+    }
     var isMenuExpanded by remember { mutableStateOf(false) }
     val categories = listOf("Kancelária", "Cestovné", "Služby", "Technika", "Strava", "Iné")
 
@@ -910,6 +916,7 @@ fun ReviewScannedInvoiceForm(
     )
 
     LazyColumn(
+        state = reviewListState,
         modifier = Modifier
             .fillMaxSize()
             .padding(20.dp)

@@ -111,7 +111,7 @@ Tvrdenie „celá aplikácia nikdy nekomunikuje so sieťou“ preto neplatí.
 
 Testy odlišujú parser nad syntetickým textom, SDK Task seam, ViewModel/Compose
 s fake recognizerom a skutočný zabalený model v Android instrumentácii bez siete.
-Natívny CI test používa syntetický tlačený doklad; nepotvrdzuje fyzický fotoaparát,
+Natívny CI test používa syntetický tlačený doklad a jeho round-trip cez skutočné Room a generovanie/otvorenie PDF; nepotvrdzuje fyzický fotoaparát,
 reálne účtovné doklady, Google OAuth ani cloudové pripísanie kreditu.
 
 API30 instrumentácia nepotvrdzuje 16 KB kompatibilitu natívnych knižníc ani podpísaný Play release; tie zostávajú samostatnými release kontrolami.

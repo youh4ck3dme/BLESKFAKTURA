@@ -10,6 +10,12 @@ import android.net.ConnectivityManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.first
+import com.example.ui.PdfExporter
+import com.example.ui.PdfExportResult
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,6 +49,42 @@ class LocalReceiptNativeOcrTest {
             assertTrue(data.reviewWarnings.isNotEmpty())
         } finally { bitmap.recycle() }
     }
+
+    @Test fun offlineReceipt_roundTripsThroughRealRoomAndNativePdfWithoutInventedVat() = runBlocking {
+        assertOffline()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = InvoiceRepository(context)
+        repo.signInDemoUser()
+        val uid = checkNotNull(repo.currentUser.value?.uid)
+        assertTrue(uid.startsWith("demo_"))
+        repo.initializeUserStats(uid)
+        val before = withTimeout(15_000) { repo.getUserStatsFlow().first { it.userId == uid } }.credits
+        val bitmap = image(listOf("SYNTHETIC SHOP s.r.o.", "FAKTURA", "18.11.2026", "CELKOM 12,30 EUR"))
+        var savedId: String? = null
+        var generated: java.io.File? = null
+        try {
+            val result = LocalReceiptOcr.extractInvoiceData(bitmap) as AiExtractionResult.Success
+            val invoice = Invoice(supplierName = result.data.supplierName, issueDate = result.data.issueDate,
+                totalAmount = result.data.totalAmount, totalAmountCents = SlovakFinanceUtils.doubleToCents(result.data.totalAmount),
+                vatAmount = result.data.vatAmount, vatRate = result.data.vatRate, userId = uid)
+            assertTrue(repo.insertInvoice(invoice).isSuccess); savedId = invoice.id
+            val saved = withTimeout(15_000) { repo.getInvoices().first { rows -> rows.any { it.id == invoice.id } } }.single { it.id == invoice.id }
+            assertEquals(1230L, saved.totalAmountCents); assertNull(saved.vatAmount); assertNull(saved.vatAmountCents); assertNull(saved.vatRate)
+            assertEquals(before, withTimeout(15_000) { repo.getUserStatsFlow().first { it.invoiceCount > 0 } }.credits)
+            val pdf = PdfExporter.generatePdfFile(context, listOf(saved), "Synthetic offline OCR test")
+            assertTrue("PDF generation failed: $pdf", pdf is PdfExportResult.Success)
+            val file = (pdf as PdfExportResult.Success).file
+            generated = file
+            assertTrue(file.length() > 0)
+            PdfRenderer(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)).use { renderer ->
+                assertTrue(renderer.pageCount > 0)
+                renderer.openPage(0).use { page -> assertTrue(page.width > 0); assertTrue(page.height > 0) }
+            }
+        } finally {
+            bitmap.recycle(); savedId?.let { repo.deleteInvoice(it) }; generated?.delete(); repo.stopCloudSync()
+        }
+    }
+
     @Test fun unrelatedImage_isRejectedByRealModelWithoutCloudFallback() = runBlocking {
         assertOffline()
         val bitmap = image(listOf("SUMMER HOLIDAY", "BLUE SKY", "GREEN FOREST"))

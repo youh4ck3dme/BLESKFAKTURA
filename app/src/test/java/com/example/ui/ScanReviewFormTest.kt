@@ -19,7 +19,7 @@ import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
-import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.semantics.SemanticsProperties
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -117,7 +117,7 @@ class ScanReviewFormTest {
         val attempts = mutableListOf<Invoice>()
         showReview(attempts)
         composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("scanned_vat_rate_input"))
-        composeRule.onNodeWithTag("scanned_vat_rate_input").assertTextContains("")
+        assertEquals("", composeRule.onNodeWithTag("scanned_vat_rate_input").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
         confirm()
         composeRule.runOnIdle {
             assertEquals(1, attempts.size)

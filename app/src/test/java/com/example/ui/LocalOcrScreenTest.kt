@@ -6,6 +6,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
@@ -48,7 +50,8 @@ class LocalOcrScreenTest {
         compose.onNodeWithTag("analyze_with_ai_button").performScrollTo().performClick()
         compose.waitUntil(5_000) { vm.scanState.value is ScanUiState.Success }
         compose.onNodeWithText("Lokálne čítanie dokončené").assertIsDisplayed()
-        compose.onNodeWithTag("ocr_review_warnings").assertExists()
+        compose.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("ocr_review_warnings"))
+        compose.onNodeWithTag("ocr_review_warnings").assertIsDisplayed()
         compose.runOnIdle {
             assertEquals(0, cloudCalls); assertEquals(1, localCalls)
             assertEquals(0, repo.reserveCalls); assertEquals(0, repo.commitCalls); assertEquals(0, repo.rollbackCalls)
