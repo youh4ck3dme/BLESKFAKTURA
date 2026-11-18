@@ -5,8 +5,6 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -30,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.app.Activity
+import android.annotation.SuppressLint
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
@@ -95,8 +94,7 @@ fun LoginScreen(
                 .background(backgroundBrush)
                 .padding(innerPadding)
                 .safeDrawingPadding()
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(24.dp),
             contentAlignment = Alignment.Center
         ) {
             // Background ambient glow using primary brand color (lavender-purple)
@@ -159,7 +157,7 @@ fun LoginScreen(
 
                 // Slovak subtext
                 Text(
-                    text = if (viewModel.isInternalTesting) "Evidencia dokladov s lokálnym OCR. Údaje pred uložením skontrolujte a doplňte." else "Evidencia účtovných dokladov s návrhom údajov z AI pre slovenských živnostníkov.",
+                    text = "Rýchla AI evidencia a automatické skenovanie účtovných dokladov pre slovenských živnostníkov.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                     textAlign = TextAlign.Center,
@@ -209,9 +207,21 @@ fun LoginScreen(
                                 }
 
                                 val webClientId = try {
-                                    context.getString(R.string.default_web_client_id)
+                                    // Both resources are optional; prefer an explicitly configured client ID.
+                                    @SuppressLint("DiscouragedApi")
+                                    val clientIdResources = listOf(
+                                        context.resources.getIdentifier("google_web_client_id", "string", context.packageName),
+                                        context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                                    )
+                                    clientIdResources.firstNotNullOfOrNull { resourceId ->
+                                        if (resourceId == 0) null else context.getString(resourceId)
+                                            .trim().takeIf { it.isNotBlank() }
+                                    }
                                 } catch (e: Exception) {
-                                    Log.e("Auth", "Missing default_web_client_id resource", e)
+                                    Log.e("Auth", "Could not read Google Web Client ID configuration", e)
+                                    null
+                                }
+                                if (webClientId == null) {
                                     Toast.makeText(
                                         context,
                                         "Chýba konfigurácia Google prihlásenia (Web Client ID).",
@@ -337,8 +347,8 @@ fun LoginScreen(
                             }
                         }
 
-                        if (BuildConfig.DEBUG || viewModel.isInternalTesting) {
-                            // This is a local profile; it does not authenticate with Firebase.
+                        if (BuildConfig.DEBUG) {
+                            // Local / Demo Mode Entry (Debug builds only)
                             OutlinedButton(
                                 onClick = {
                                     viewModel.signInDemoUser()
@@ -364,7 +374,7 @@ fun LoginScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = if (viewModel.isInternalTesting) "Pokračovať lokálne bez účtu" else "Vstúpiť ako hosť (Debug Demo)",
+                                        text = "Vstúpiť ako hosť (Debug Demo)",
                                         style = MaterialTheme.typography.labelLarge.copy(
                                             fontWeight = FontWeight.Bold,
                                             letterSpacing = 0.2.sp
@@ -399,16 +409,14 @@ fun LoginScreen(
                         )
                         Column {
                             Text(
-                                text = if (viewModel.isInternalTesting) "Interná verzia s lokálnym OCR" else if (viewModel.isFirebaseMode) "Cloudová synchronizácia" else "Chýba cloudová konfigurácia",
+                                text = if (viewModel.isFirebaseMode) "Režim: Bezpečný Cloud" else "Chýba cloudová konfigurácia",
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = if (viewModel.isInternalTesting) {
-                                    "Čítanie snímok prebieha priamo v zariadení. Lokálny režim funguje bez Google účtu; prihlásenie cez Google pridá cloudovú synchronizáciu údajov dokladov."
-                                } else if (viewModel.isFirebaseMode) {
-                                    "Google prihlásenie slúži na synchronizáciu údajov dokladov cez Firebase."
+                                text = if (viewModel.isFirebaseMode) {
+                                    "Aplikácia je pripojená k bezpečnému cloudu Firebase. Vaše doklady sú chránené a viazané na váš Google účet."
                                 } else {
                                     "Prihlásenie cez cloud nie je v tejto zostave nakonfigurované. Skontrolujte prosím konfiguráciu služby Firebase."
                                 },

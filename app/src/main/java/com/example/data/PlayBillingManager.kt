@@ -198,18 +198,34 @@ class PlayBillingManager(
     private val billingScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val packageNameProvider: () -> String = { BuildConfig.APPLICATION_ID },
     enableBillingClient: Boolean = true
-) : PurchasesUpdatedListener {
+) : PurchasesUpdatedListener, BillingGateway {
     private val appContext = context.applicationContext
 
     private val _billingState = MutableStateFlow<PlayBillingUiState>(PlayBillingUiState.Idle)
-    val billingState: StateFlow<PlayBillingUiState> = _billingState.asStateFlow()
+    override val billingState: StateFlow<PlayBillingUiState> = _billingState.asStateFlow()
 
     private val _catalogPrices = MutableStateFlow<Map<String, String>>(emptyMap())
-    val catalogPrices: StateFlow<Map<String, String>> = _catalogPrices.asStateFlow()
+    override val catalogPrices: StateFlow<Map<String, String>> = _catalogPrices.asStateFlow()
+
+    private val _pendingUnverifiedCount = MutableStateFlow(0)
+    override val pendingUnverifiedCount: StateFlow<Int> = _pendingUnverifiedCount.asStateFlow()
 
     private val _productDetails = mutableMapOf<String, ProductDetails>()
     private val inFlightTokens: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
+    private val pendingLock = Any()
+    private val pendingInAppTokens = mutableSetOf<String>()
+    private val pendingSubsTokens = mutableSetOf<String>()
+    private val pendingUpdatedTokens = mutableSetOf<String>()
     private var isConnected = false
+
+    private fun refreshPendingCountLocked() {
+        val uniqueTokens = LinkedHashSet<String>()
+        uniqueTokens.addAll(pendingInAppTokens)
+        uniqueTokens.addAll(pendingSubsTokens)
+        uniqueTokens.addAll(pendingUpdatedTokens)
+        uniqueTokens.addAll(inFlightTokens)
+        _pendingUnverifiedCount.value = uniqueTokens.size
+    }
 
     private val billingClient: BillingClient? = if (enableBillingClient) {
         BillingClient.newBuilder(appContext)
@@ -226,7 +242,7 @@ class PlayBillingManager(
         null
     }
 
-    fun startConnection() {
+    override fun startConnection() {
         val client = billingClient ?: return
         if (client.isReady) {
             isConnected = true
@@ -259,7 +275,7 @@ class PlayBillingManager(
         })
     }
 
-    fun launchPurchase(activity: Activity?, product: BillingProduct) {
+    override fun launchPurchase(activity: Activity?, product: BillingProduct) {
         if (activity == null) {
             _billingState.value = PlayBillingUiState.Error("Nákup vyžaduje aktívne okno aplikácie.")
             return
@@ -315,7 +331,7 @@ class PlayBillingManager(
         }
     }
 
-    fun retryPendingVerifications() {
+    override fun retryPendingVerifications() {
         val client = billingClient ?: return
         if (!client.isReady) {
             startConnection()
@@ -380,6 +396,10 @@ class PlayBillingManager(
                 if (!inFlightTokens.add(purchaseToken)) {
                     return
                 }
+                synchronized(pendingLock) {
+                    pendingUpdatedTokens.add(purchaseToken)
+                    refreshPendingCountLocked()
+                }
                 try {
                     _billingState.value = PlayBillingUiState.PendingVerification(
                         productId = productId,
@@ -392,6 +412,13 @@ class PlayBillingManager(
                     )
                     verifyResult.fold(
                         onSuccess = { response ->
+                            if (response.status in setOf("GRANTED", "ALREADY_PROCESSED", "SUBSCRIPTION_ACTIVE", "SUBSCRIPTION_INACTIVE")) {
+                                synchronized(pendingLock) {
+                                    pendingUpdatedTokens.remove(purchaseToken)
+                                    pendingInAppTokens.remove(purchaseToken)
+                                    pendingSubsTokens.remove(purchaseToken)
+                                }
+                            }
                             _billingState.value = when (response.status) {
                                 "GRANTED" -> PlayBillingUiState.Verified(
                                     productId = response.productId,
@@ -430,9 +457,18 @@ class PlayBillingManager(
                     )
                 } finally {
                     inFlightTokens.remove(purchaseToken)
+                    synchronized(pendingLock) {
+                        refreshPendingCountLocked()
+                    }
                 }
             }
             Purchase.PurchaseState.PENDING -> {
+                if (purchaseToken.isNotBlank()) {
+                    synchronized(pendingLock) {
+                        pendingUpdatedTokens.add(purchaseToken)
+                        refreshPendingCountLocked()
+                    }
+                }
                 _billingState.value = PlayBillingUiState.Info(
                     "Platba v Google Play čaká na dokončenie. Nárok sa pripíše až po potvrdení platby a overení serverom."
                 )
@@ -443,11 +479,11 @@ class PlayBillingManager(
         }
     }
 
-    fun clearMessage() {
+    override fun clearMessage() {
         _billingState.value = PlayBillingUiState.Idle
     }
 
-    fun endConnection() {
+    override fun endConnection() {
         if (billingClient?.isReady == true) {
             billingClient.endConnection()
         }
@@ -507,10 +543,21 @@ class PlayBillingManager(
         listOf(BillingClient.ProductType.INAPP, BillingClient.ProductType.SUBS).forEach { type ->
             val params = QueryPurchasesParams.newBuilder().setProductType(type).build()
             client.queryPurchasesAsync(params) { result, purchases ->
-                if (result.responseCode == BillingClient.BillingResponseCode.OK && purchases.isNotEmpty()) {
-                    val pendingToVerify = purchases.filter { purchase ->
-                        purchase.purchaseState == Purchase.PurchaseState.PURCHASED &&
-                            (type == BillingClient.ProductType.INAPP || !purchase.isAcknowledged)
+                if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                    val unresolvedPurchases = purchases.filter { purchase ->
+                        purchase.purchaseState == Purchase.PurchaseState.PENDING ||
+                            (purchase.purchaseState == Purchase.PurchaseState.PURCHASED &&
+                                (type == BillingClient.ProductType.INAPP || !purchase.isAcknowledged))
+                    }
+                    synchronized(pendingLock) {
+                        val bucket = if (type == BillingClient.ProductType.INAPP) pendingInAppTokens else pendingSubsTokens
+                        bucket.clear()
+                        unresolvedPurchases.mapNotNullTo(bucket) { p -> p.purchaseToken.takeIf { it.isNotBlank() } }
+                        pendingUpdatedTokens.retainAll(pendingInAppTokens + pendingSubsTokens)
+                        refreshPendingCountLocked()
+                    }
+                    val pendingToVerify = unresolvedPurchases.filter {
+                        it.purchaseState == Purchase.PurchaseState.PURCHASED
                     }
                     if (pendingToVerify.isNotEmpty()) {
                         Log.i(TAG, "Recovering ${pendingToVerify.size} $type purchases via backend verifier.")

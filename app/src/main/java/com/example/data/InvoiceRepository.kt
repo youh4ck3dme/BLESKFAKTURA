@@ -6,20 +6,15 @@ import com.example.BuildConfig
 import com.example.R
 import com.example.ui.PdfExporter
 import com.google.firebase.FirebaseApp
-import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +41,7 @@ data class UserInfo(
 sealed interface CreditReservationResult {
     data class Reserved(val reservationId: String) : CreditReservationResult
     data object UnlimitedSubscriber : CreditReservationResult
-    data object FreeInternalTest : CreditReservationResult
+    data object FreeLocalScan : CreditReservationResult
     data object InsufficientCredits : CreditReservationResult
     data object ScanAlreadyInProgress : CreditReservationResult
 }
@@ -55,7 +50,7 @@ class InvoiceRepository(
     context: Context,
     private val injectedFirestore: FirebaseFirestore? = null,
     private val injectedAuth: FirebaseAuth? = null
-) {
+) : InvoiceDataGateway {
     private val appContext = context.applicationContext
     private val database = AppDatabase.getDatabase(appContext)
     private val invoiceDao = database.invoiceDao()
@@ -68,10 +63,10 @@ class InvoiceRepository(
     private var syncedUid: String? = null
 
     private val _currentUser = MutableStateFlow<UserInfo?>(null)
-    val currentUser: StateFlow<UserInfo?> = _currentUser.asStateFlow()
+    override val currentUser: StateFlow<UserInfo?> = _currentUser.asStateFlow()
 
     private val _syncError = MutableStateFlow<String?>(null)
-    val syncError: StateFlow<String?> = _syncError.asStateFlow()
+    override val syncError: StateFlow<String?> = _syncError.asStateFlow()
 
     private val firebaseAuth: FirebaseAuth? by lazy {
         injectedAuth ?: try {
@@ -120,15 +115,15 @@ class InvoiceRepository(
         }
     }
 
-    fun isFirebaseMode(): Boolean = isFirebaseReady
+    override fun isFirebaseMode(): Boolean = isFirebaseReady
 
-    fun clearSyncError() {
+    override fun clearSyncError() {
         _syncError.value = null
     }
 
     // --- Authentication ---
 
-    suspend fun signInWithGoogle(idToken: String): Result<UserInfo> = withContext(Dispatchers.IO) {
+    override suspend fun signInWithGoogle(idToken: String): Result<UserInfo> = withContext(Dispatchers.IO) {
         val auth = firebaseAuth
         if (auth == null || firestoreDb == null) {
             return@withContext Result.failure(IllegalStateException("Firebase nie je v tejto zostave nakonfigurovaný."))
@@ -145,6 +140,7 @@ class InvoiceRepository(
                 photoUrl = firebaseUser.photoUrl?.toString()
             )
             _currentUser.value = userInfo
+            initializeUserStats(userInfo.uid)
             Result.success(userInfo)
         } catch (e: CancellationException) {
             throw e
@@ -154,23 +150,25 @@ class InvoiceRepository(
         }
     }
 
-    fun signInDemoUser() {
-        if (!BuildConfig.DEBUG && !BuildConfig.INTERNAL_TESTING) {
-            Log.w(TAG, "Local sign-in blocked in production release builds.")
+    override fun signInDemoUser() {
+        if (!BuildConfig.DEBUG) {
+            Log.w(TAG, "Demo sign-in blocked in release builds.")
             return
         }
         stopCloudSync()
-        firebaseAuth?.signOut()
         val demoUser = UserInfo(
             uid = DEMO_USER_ID,
-            email = null,
-            displayName = "Lokálny používateľ",
+            email = "demo@bleskovafaktura.local",
+            displayName = "Demo Živnostník",
             photoUrl = null
         )
         _currentUser.value = demoUser
+        repositoryScope.launch {
+            initializeUserStats(demoUser.uid)
+        }
     }
 
-    suspend fun signOutAndClearLocalCache() = withContext(Dispatchers.IO) {
+    override suspend fun signOutAndClearLocalCache() = withContext(Dispatchers.IO) {
         val oldUid = _currentUser.value?.uid
         stopCloudSync()
         _syncError.value = null
@@ -179,10 +177,7 @@ class InvoiceRepository(
         } catch (e: Exception) {
             Log.e(TAG, "Error signing out from Firebase", e)
         }
-        if (oldUid != null && !oldUid.startsWith("demo_")) {
-            invoiceDao.getInvoicesForUserOnce(oldUid).forEach {
-                ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl)
-            }
+        if (oldUid != null) {
             invoiceDao.deleteAllForUser(oldUid)
             userStatsDao.deleteUserStats(oldUid)
         }
@@ -201,10 +196,7 @@ class InvoiceRepository(
         }
         _currentUser.value = null
         repositoryScope.launch {
-            if (oldUid != null && !oldUid.startsWith("demo_")) {
-                invoiceDao.getInvoicesForUserOnce(oldUid).forEach {
-                    ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl)
-                }
+            if (oldUid != null) {
                 invoiceDao.deleteAllForUser(oldUid)
                 userStatsDao.deleteUserStats(oldUid)
             }
@@ -214,7 +206,7 @@ class InvoiceRepository(
 
     // --- Cloud Sync & Lifecycle ---
 
-    fun stopCloudSync() {
+    override fun stopCloudSync() {
         userStatsListener?.remove()
         userStatsListener = null
         invoicesListener?.remove()
@@ -222,7 +214,7 @@ class InvoiceRepository(
         syncedUid = null
     }
 
-    suspend fun initializeUserStats(userId: String) = withContext(Dispatchers.IO) {
+    override suspend fun initializeUserStats(userId: String) = withContext(Dispatchers.IO) {
         if (userId.isBlank()) return@withContext
         val isCloudUser = isFirebaseReady && !userId.startsWith("demo_") && firebaseAuth?.currentUser?.uid == userId
         val db = firestoreDb
@@ -421,24 +413,16 @@ class InvoiceRepository(
 
     // --- Invoices Data Access ---
 
-    fun getInvoices(): Flow<List<Invoice>> {
+    override fun getInvoices(): Flow<List<Invoice>> {
         val user = _currentUser.value ?: return flow { emit(emptyList()) }
         return invoiceDao.getInvoicesForUser(user.uid).map { entities ->
             entities.map { it.toInvoice() }
         }.flowOn(Dispatchers.IO)
     }
 
-    suspend fun insertInvoice(invoice: Invoice): Result<Unit> = withContext(Dispatchers.IO) {
-        val uid = _currentUser.value?.uid
+    override suspend fun insertInvoice(invoice: Invoice): Result<Unit> = withContext(Dispatchers.IO) {
+        val uid = _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid
             ?: return@withContext Result.failure(IllegalStateException("Používateľ nie je prihlásený."))
-        if (invoice.userId.isNotBlank() && invoice.userId != uid) {
-            return@withContext Result.failure(IllegalStateException("Účet sa zmenil. Doklad nebol uložený do iného profilu."))
-        }
-        val isCloudUser = !uid.startsWith("demo_")
-        val db = if (isCloudUser) firestoreDb else null
-        if (isCloudUser && (db == null || firebaseAuth?.currentUser?.uid != uid)) {
-            return@withContext Result.failure(IllegalStateException("Pred uložením sa znova prihláste do správneho účtu Google."))
-        }
 
         val cents = invoice.effectiveTotalCents()
         val vatCents = invoice.effectiveVatCents()
@@ -459,8 +443,11 @@ class InvoiceRepository(
             category = invoice.category.takeIf { it in ALLOWED_CATEGORIES } ?: "Iné"
         )
 
-        // A cloud profile has no offline outbox. Confirm the server write before
-        // making this version durable locally; the form can retry with the same id.
+        // Save locally immediately (preserves local imageUrl path)
+        invoiceDao.insertInvoice(normalizedInvoice.toEntity())
+
+        val db = firestoreDb
+        val isCloudUser = isFirebaseReady && !uid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == uid
         if (isCloudUser && db != null) {
             val docRef = db.collection("users").document(uid).collection("invoices").document(normalizedInvoice.id)
             try {
@@ -482,44 +469,33 @@ class InvoiceRepository(
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
 
-                withTimeout(15_000L) {
-                    db.runTransaction { tx ->
-                        val existingSnap = tx.get(docRef)
-                        if (!existingSnap.exists()) {
-                            val createPayload = HashMap(baseFields).apply {
-                                put("userId", uid)
-                                put("createdAt", FieldValue.serverTimestamp())
-                            }.filterValues { it != null }
-                            tx.set(docRef, createPayload)
-                        } else {
-                            tx.update(docRef, baseFields)
-                        }
-                    }.await()
-                }
-            } catch (e: TimeoutCancellationException) {
-                val error = IllegalStateException("Uloženie do cloudu sa nepotvrdilo. Skontrolujte pripojenie a zopakujte uloženie.", e)
-                _syncError.value = error.message
-                return@withContext Result.failure(error)
+                db.runTransaction { tx ->
+                    val existingSnap = tx.get(docRef)
+                    if (!existingSnap.exists()) {
+                        val createPayload = HashMap(baseFields).apply {
+                            put("userId", uid)
+                            put("createdAt", FieldValue.serverTimestamp())
+                        }.filterValues { it != null }
+                        tx.set(docRef, createPayload)
+                    } else {
+                        tx.update(docRef, baseFields)
+                    }
+                }.await()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 handleFirestoreError(e, OperationType.WRITE, docRef.path, firebaseAuth)
-                val error = IllegalStateException("Doklad sa nepodarilo uložiť do cloudu. Skontrolujte pripojenie a skúste uloženie znova.", e)
-                _syncError.value = error.message
-                return@withContext Result.failure(error)
+                _syncError.value = "Doklad uložený lokálne, ale cloudová synchronizácia zlyhala."
+                recalculateStats(uid, updateFirestore = false)
+                return@withContext Result.failure(e)
             }
         }
 
-        if (_currentUser.value?.uid != uid) {
-            return@withContext Result.failure(IllegalStateException("Účet sa počas ukladania zmenil. Doklad sa neuložil do iného lokálneho profilu."))
-        }
-        invoiceDao.insertInvoice(normalizedInvoice.toEntity())
-        _syncError.value = null
-        recalculateStats(uid, updateFirestore = isCloudUser)
+        recalculateStats(uid, updateFirestore = true)
         Result.success(Unit)
     }
 
-    suspend fun deleteInvoice(id: String) = withContext(Dispatchers.IO) {
+    override suspend fun deleteInvoice(id: String) = withContext(Dispatchers.IO) {
         val uid = _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid ?: return@withContext
         val existing = invoiceDao.getInvoiceByIdForUser(id, uid)
         ReceiptImageProcessor.deleteArchivedReceipt(appContext, existing?.imageUrl)
@@ -544,14 +520,14 @@ class InvoiceRepository(
 
     // --- User Statistics & Atomic Credit Reservations ---
 
-    fun getUserStatsFlow(): Flow<UserStats> {
+    override fun getUserStatsFlow(): Flow<UserStats> {
         val user = _currentUser.value ?: return flow { emit(UserStats()) }
         return userStatsDao.getUserStatsFlow(user.uid).map { entity ->
             entity?.toUserStats() ?: UserStats(userId = user.uid)
         }.flowOn(Dispatchers.IO)
     }
 
-    suspend fun reserveScanCredit(ownerUid: String): CreditReservationResult = creditMutex.withLock {
+    override suspend fun reserveScanCredit(ownerUid: String): CreditReservationResult = creditMutex.withLock {
         withContext(Dispatchers.IO) {
             val db = firestoreDb
             val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
@@ -611,73 +587,77 @@ class InvoiceRepository(
         }
     }
 
-    suspend fun commitScanReservation(ownerUid: String, reservationId: String) = creditMutex.withLock {
-        withContext(Dispatchers.IO) {
-            val db = firestoreDb
-            val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
-            if (isCloudUser && db != null) {
-                val userRef = db.collection("users").document(ownerUid)
-                try {
-                    db.runTransaction { tx ->
-                        val snap = tx.get(userRef)
-                        if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
-                            tx.update(
-                                userRef,
-                                mapOf(
-                                    "activeReservationId" to null,
-                                    "updatedAt" to FieldValue.serverTimestamp()
+    override suspend fun commitScanReservation(ownerUid: String, reservationId: String) {
+        creditMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val db = firestoreDb
+                val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
+                if (isCloudUser && db != null) {
+                    val userRef = db.collection("users").document(ownerUid)
+                    try {
+                        db.runTransaction { tx ->
+                            val snap = tx.get(userRef)
+                            if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
+                                tx.update(
+                                    userRef,
+                                    mapOf(
+                                        "activeReservationId" to null,
+                                        "updatedAt" to FieldValue.serverTimestamp()
+                                    )
                                 )
-                            )
-                        }
-                    }.await()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
+                            }
+                        }.await()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
+                    }
                 }
             }
         }
     }
 
-    suspend fun rollbackScanReservation(ownerUid: String, reservationId: String) = creditMutex.withLock {
-        withContext(Dispatchers.IO) {
-            val db = firestoreDb
-            val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
-            if (isCloudUser && db != null) {
-                val userRef = db.collection("users").document(ownerUid)
-                try {
-                    val rolledBack = db.runTransaction { tx ->
-                        val snap = tx.get(userRef)
-                        if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
-                            val currentCredits = snap.getLong("credits")?.toInt() ?: 0
-                            tx.update(
-                                userRef,
-                                mapOf(
-                                    "credits" to (currentCredits + 1),
-                                    "activeReservationId" to null,
-                                    "updatedAt" to FieldValue.serverTimestamp()
+    override suspend fun rollbackScanReservation(ownerUid: String, reservationId: String) {
+        creditMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val db = firestoreDb
+                val isCloudUser = isFirebaseReady && !ownerUid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == ownerUid
+                if (isCloudUser && db != null) {
+                    val userRef = db.collection("users").document(ownerUid)
+                    try {
+                        val rolledBack = db.runTransaction { tx ->
+                            val snap = tx.get(userRef)
+                            if (snap.exists() && snap.getString("activeReservationId") == reservationId) {
+                                val currentCredits = snap.getLong("credits")?.toInt() ?: 0
+                                tx.update(
+                                    userRef,
+                                    mapOf(
+                                        "credits" to (currentCredits + 1),
+                                        "activeReservationId" to null,
+                                        "updatedAt" to FieldValue.serverTimestamp()
+                                    )
                                 )
-                            )
-                            true
-                        } else {
-                            false
+                                true
+                            } else {
+                                false
+                            }
+                        }.await()
+                        if (rolledBack) {
+                            val local = userStatsDao.getUserStats(ownerUid)
+                            if (local != null) {
+                                userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
+                            }
                         }
-                    }.await()
-                    if (rolledBack) {
-                        val local = userStatsDao.getUserStats(ownerUid)
-                        if (local != null) {
-                            userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
-                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    handleFirestoreError(e, OperationType.UPDATE, userRef.path, firebaseAuth)
-                }
-            } else {
-                val local = userStatsDao.getUserStats(ownerUid)
-                if (local != null) {
-                    userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
+                } else {
+                    val local = userStatsDao.getUserStats(ownerUid)
+                    if (local != null) {
+                        userStatsDao.insertUserStats(local.copy(credits = local.credits + 1))
+                    }
                 }
             }
         }
@@ -685,67 +665,50 @@ class InvoiceRepository(
 
     // --- Account Deletion (BF-17) ---
 
-    suspend fun deleteAccount(
-        targetUid: String? = null,
-        reauthenticationIdToken: String? = null
-    ): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun deleteAccount(targetUid: String?): Result<Unit> = withContext(Dispatchers.IO) {
         val uid = targetUid ?: _currentUser.value?.uid ?: firebaseAuth?.currentUser?.uid
             ?: return@withContext Result.failure(IllegalStateException("Žiadny prihlásený účet na vymazanie."))
-        val isLocalUser = uid.startsWith("demo_")
-        val db = if (isLocalUser) null else firestoreDb
-        val authUser = if (isLocalUser) null else firebaseAuth?.currentUser
-        if (!isLocalUser && (db == null || authUser?.uid != uid)) {
-            return@withContext Result.failure(IllegalStateException("Pred výmazom sa prihláste do správneho účtu Google."))
-        }
 
         stopCloudSync()
-        try {
-            if (db != null && authUser != null) {
-                withTimeout(60_000L) {
-                    // Re-authenticate before deleting any data, so an expired login is harmless.
-                    if (!reauthenticationIdToken.isNullOrBlank()) {
-                        authUser.reauthenticate(GoogleAuthProvider.getCredential(reauthenticationIdToken, null)).await()
-                    }
-                    val userRef = db.collection("users").document(uid)
-                    // Server reads ensure an offline cache cannot report an incomplete deletion as complete.
-                    while (true) {
-                        val batch = userRef.collection("invoices").limit(250).get(Source.SERVER).await()
-                        if (batch.isEmpty) break
-                        val writes = db.batch()
-                        batch.documents.forEach { writes.delete(it.reference) }
-                        writes.commit().await()
-                    }
-                    userRef.delete().await()
-                    authUser.delete().await()
+
+        // 1. Delete archived receipt photos & Room records for uid
+        val localInvoices = invoiceDao.getInvoicesForUserOnce(uid)
+        localInvoices.forEach { ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl) }
+        invoiceDao.deleteAllForUser(uid)
+        userStatsDao.deleteUserStats(uid)
+        clearTempCacheDirectories()
+
+        // 2. Delete Firestore subcollection documents + user profile document
+        val db = firestoreDb
+        val isCloudUser = isFirebaseReady && !uid.startsWith("demo_") && firebaseAuth?.currentUser?.uid == uid
+        if (isCloudUser && db != null) {
+            val userRef = db.collection("users").document(uid)
+            try {
+                val cloudInvoices = userRef.collection("invoices").get().await()
+                cloudInvoices.documents.forEach { doc ->
+                    doc.reference.delete().await()
                 }
+                userRef.delete().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.DELETE, userRef.path, firebaseAuth)
+                return@withContext Result.failure(e)
             }
-            // Keep local receipts and records until the cloud/Auth steps have succeeded.
-            withContext(NonCancellable) {
-                val localInvoices = invoiceDao.getInvoicesForUserOnce(uid)
-                localInvoices.forEach { ReceiptImageProcessor.deleteArchivedReceipt(appContext, it.imageUrl) }
-                invoiceDao.deleteAllForUser(uid)
-                userStatsDao.deleteUserStats(uid)
-                clearTempCacheDirectories()
-                _syncError.value = null
-                _currentUser.value = null
+
+            // 3. Delete Firebase Auth account
+            try {
+                firebaseAuth?.currentUser?.delete()?.await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "FirebaseAuth user deletion failed", e)
+                return@withContext Result.failure(e)
             }
-            Result.success(Unit)
-        } catch (e: TimeoutCancellationException) {
-            if (db != null && firebaseAuth?.currentUser?.uid == uid) startRealtimeSyncListeners(uid, db)
-            Result.failure(IllegalStateException("Výmaz sa nestihol dokončiť. Skontrolujte pripojenie a skúste ho znova; časť cloudových dokladov už mohla byť odstránená.", e))
-        } catch (e: CancellationException) {
-            if (db != null && firebaseAuth?.currentUser?.uid == uid) startRealtimeSyncListeners(uid, db)
-            throw e
-        } catch (e: Exception) {
-            if (db != null && firebaseAuth?.currentUser?.uid == uid) startRealtimeSyncListeners(uid, db)
-            val message = if (e is FirebaseAuthRecentLoginRequiredException) {
-                "Pred výmazom je potrebné znova overiť účet Google. Zopakujte výmaz a vyberte ten istý účet."
-            } else {
-                "Výmaz sa nedokončil. Skontrolujte pripojenie a skúste to znova. Už odstránené cloudové doklady sa neobnovia."
-            }
-            Log.e(TAG, "Account deletion failed: ${e.javaClass.simpleName}")
-            Result.failure(IllegalStateException(message, e))
         }
+
+        _currentUser.value = null
+        Result.success(Unit)
     }
 
     private suspend fun recalculateStats(userId: String, updateFirestore: Boolean) {
@@ -769,18 +732,14 @@ class InvoiceRepository(
         if (isCloudUser && db != null) {
             val userRef = db.collection("users").document(userId)
             try {
-                withTimeout(5_000L) {
-                    userRef.update(
-                        mapOf(
-                            "totalInvoiced" to totalDouble,
-                            "totalInvoicedCents" to totalCents,
-                            "invoiceCount" to count,
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    ).await()
-                }
-            } catch (_: TimeoutCancellationException) {
-                _syncError.value = "Doklad je uložený, ale obnovenie cloudového súhrnu sa nepotvrdilo."
+                userRef.update(
+                    mapOf(
+                        "totalInvoiced" to totalDouble,
+                        "totalInvoicedCents" to totalCents,
+                        "invoiceCount" to count,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

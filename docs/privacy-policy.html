@@ -36,51 +36,64 @@
 </head>
 <body>
   <h1>Zásady ochrany osobných údajov</h1>
-  <p class="meta">NÁVRH - pred zverejnením doplňte označené údaje. Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>). Verzia dokumentu: 16. 11. 2026.</p>
+  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>) • Technický návrh: 18. 11. 2026</p>
+  <p><strong>Návrh pred zverejnením:</strong> vydavateľ musí potvrdiť identitu prevádzkovateľa, kontakt, právne základy, pravidlá retencie a vybavovania žiadostí. Tento text opisuje implementáciu; nepotvrdzuje nasadenie služieb ani schválenie právnych údajov.</p>
+
   <section>
     <h2>1. Prevádzkovateľ a kontakt</h2>
-    <p>Prevádzkovateľ: <strong>{{OPERATOR_NAME}}</strong>, adresa: {{OPERATOR_ADDRESS}}.</p>
-    <p>Kontakt pre ochranu osobných údajov a žiadosti o výmaz: <a href="mailto:{{PRIVACY_CONTACT_EMAIL}}">{{PRIVACY_CONTACT_EMAIL}}</a>.</p>
+    <p>
+      Prevádzkovateľom mobilnej aplikácie <strong>Blesková Faktúra</strong> je jej vydavateľ.
+      V otázkach ochrany osobných údajov (GDPR) alebo pri žiadostiach o prístup či výmaz údajov nás kontaktujte na:
+      <a href="mailto:support@vorkei.com">support@vorkei.com</a>.
+    </p>
   </section>
+
   <section>
-    <h2>2. Rozsah tejto internej verzie</h2>
-    <p>Dokument opisuje bezplatnú internú testovaciu verziu aplikácie. Nákupy a predplatné sa v nej neponúkajú a aplikácia nezbiera čísla platobných kariet. Pred zapnutím platenej verzie sa tieto zásady aktualizujú podľa skutočne spracúvaných nákupných záznamov.</p>
-    <p>Spôsob analýzy dokladov v tejto verzii: <strong>{{AI_PROCESSING_MODE}}</strong>.</p>
-  </section>
-  <section>
-    <h2>3. Údaje a účely spracúvania</h2>
+    <h2>2. Aké údaje aplikácia spracúva</h2>
+    <p>Lokálne OCR spracúva fotografiu v zariadení a neodosiela jej obsah cloudovému AI. ML Kit môže odosielať diagnostické a prevádzkové metriky vrátane údajov o zariadení, aplikácii, identifikátora inštalácie, konfigurácie a výkonnosti SDK. Uložené polia dokladu sa pri cloudovom účte naďalej synchronizujú. Pozri <a href="https://developers.google.com/ml-kit/android-data-disclosure">informácie o dátach ML Kit</a>.</p>
     <ul>
-      <li><strong>Účet:</strong> identifikátor Google/Firebase účtu (UID), e-mail, zobrazované meno a URL profilovej fotografie. Používajú sa na prihlásenie a oddelenie údajov jednotlivých používateľov.</li>
-      <li><strong>Doklady:</strong> dodávateľ, IČO/DIČ, dátumy, sumy, DPH, mena, kategória, stav úhrady a poznámky. Slúžia na evidenciu, synchronizáciu a export.</li>
-      <li><strong>Fotografie:</strong> snímka z fotoaparátu po udelení oprávnenia alebo jednotlivý obrázok vybraný systémovým výberom. Aplikácia si nevyžaduje široký prístup k celej knižnici fotografií. Archivované fotografie dokladov sú v súkromnom úložisku zariadenia.</li>
-      <li><strong>Bezpečnostné údaje:</strong> Firebase App Check a Google Play Integrity používajú technické údaje a tokeny na overenie pravosti aplikácie a ochranu služieb.</li>
+      <li><strong>Údaje účtu Google (Firebase Authentication):</strong> jedinečný identifikátor účtu (<code>UID</code>), e-mailová adresa, zobrazované meno a URL profilovej fotografie získané pri prihlásení cez Google Credential Manager.</li>
+      <li><strong>Účtovné doklady a faktúry:</strong> názov dodávateľa, IČO, DIČ, dátum vystavenia a splatnosti, suma, DPH, sadzba DPH, mena, kategória, stav úhrady a poznámky.</li>
+      <li><strong>Snímky dokladov:</strong> fotografie nasnímané fotoaparátom (iba po udelení oprávnenia <code>CAMERA</code>) alebo vybrané z galérie cez systémový Android Photo Picker (bez prístupu k celej knižnici médií). Originálne snímky sa archivujú výlučne v súkromnom internom úložisku zariadenia (<code>filesDir/receipts/</code>).</li>
+      <li><strong>Stav kreditov a nákupov:</strong> počet dostupných AI skenov, stav predplatného, ID zakúpeného produktu a kryptografický hash nákupného tokenu sprostredkovaného cez Google Play Billing (aplikácia nikdy nezbiera ani neukladá čísla platobných kariet).</li>
+      <li><strong>Bezpečnostné tokeny integrity zariadenia:</strong> Firebase App Check s poskytovateľom <strong>Google Play Integrity API</strong> v produkčnom vydaní na ochranu AI a backendových rozhraní pred neoprávneným volaním.</li>
     </ul>
-    <p>Právne základy a konkrétne retenčné podmienky prevádzkovateľa: {{PROCESSING_LEGAL_BASES}}.</p>
   </section>
+
   <section>
-    <h2>4. Poskytovatelia služieb a prenos údajov</h2>
+    <h2>3. Účel spracúvania a príjemcovia</h2>
     <ul>
-      <li><strong>Google/Firebase Authentication a Cloud Firestore:</strong> prihlásenie a synchronizácia údajov. Databáza je v lokalite <code>europe-west2</code>; samotná lokalita databázy neznamená, že všetky ostatné služby spracúvajú údaje iba v tejto lokalite.</li>
-      <li><strong>Cloudová AI, ak je zapnutá:</strong> fotografia a pokyn sa odošlú cez Firebase AI Logic poskytovateľovi Gemini na získanie polí dokladu. Google môže spracúvať bezpečnostné a prevádzkové záznamy podľa podmienok použitého programu. Prevádzkovateľ nepotvrdzuje anonymizáciu ani nulové uchovávanie iba preto, že prenos je jednorazový.</li>
-      <li><strong>Export:</strong> PDF vzniká v zariadení. Používateľ si zvolí, či a do ktorej aplikácie ho zdieľa; zdieľaná kópia sa riadi aj pravidlami zvoleného príjemcu.</li>
+      <li><strong>Autentifikácia a cloudová synchronizácia:</strong> Firebase Authentication a Cloud Firestore od Google. Kód a pravidlá izolujú údaje v priestore <code>users/{uid}</code>; aktuálne nasadenie a zmluvné údaje spracovateľov musí potvrdiť prevádzkovateľ.</li>
+      <li><strong>Cloudová AI extrakcia údajov z dokladu:</strong> snímka sa odosiela cez TLS prostredníctvom Firebase AI Logic (Gemini) na vyťaženie účtovných polí. Aplikácia ju neukladá do Firestore. Spracúvanie a uchovávanie na strane poskytovateľa závisí od použitej služby a plánu; pred použitím skutočných dokladov treba overiť <a href="https://ai.google.dev/gemini-api/terms">aktuálne podmienky Gemini API</a>. Lokálne uloženie fotografie nie je zárukou jej nespracúvania externou AI službou.</li>
+      <li><strong>Nákupy a predplatné:</strong> klient Google Play Billing a implementovaný backend v regióne <code>europe-west1</code> počítajú s overením <code>purchaseToken</code> cez Google Play Developer API pred pripísaním nároku. Nasadenie a skutočný nákup nie sú týmto textom potvrdené.</li>
+      <li><strong>Export PDF:</strong> súhrnný PDF výkaz vzniká lokálne v zariadení a zdieľa sa iba vtedy, keď používateľ aktívne zvolí export a cieľovú aplikáciu.</li>
     </ul>
-    <p>Údaje prenášané cez Firebase používajú šifrovaný prenos. Aplikácia ich nepoužíva na cielenú reklamu.</p>
-    <p>Konkrétne informácie o príjemcoch, prípadných medzinárodných prenosoch a ochranných opatreniach: {{PROCESSORS_AND_TRANSFERS}}.</p>
   </section>
+
   <section>
-    <h2>5. Ukladanie, čistenie a výmaz</h2>
-    <ul>
-      <li>Účet a doklady uchovávame počas používania účtu do ich zmazania alebo vybavenia žiadosti o výmaz podľa uvedených podmienok.</li>
-      <li>Lokálna databáza a fotografie sa ukladajú v súkromnom úložisku aplikácie. Android zálohy a prenos citlivých dát sú obmedzené manifestom a pravidlami zálohovania.</li>
-      <li>Pri odhlásení z Google účtu aplikácia čistí jeho lokálne doklady a dočasné súbory. Interný lokálny profil uchováva doklady aj po odhlásení, aby boli dostupné pri opätovnom vstupe; odstráni ich až voľba vymazania lokálneho profilu. Staré PDF exporty kontroluje aj pri ďalšom exporte; samostatný časovač garantujúci zmazanie presne po 24 hodinách nie je prisľúbený.</li>
-      <li>Výmaz môžete začať v aplikácii cez <strong>Nastavenia - Vymazať účet a všetky dáta</strong> alebo cez <a href="./account-deletion.html">webový postup</a>. Dokončenie cloudového výmazu vyžaduje pripojenie a môže vyžadovať opätovné prihlásenie. Úspech potvrdí aplikácia alebo prevádzkovateľ.</li>
-      <li>Kópie, ktoré ste sami exportovali alebo zdieľali mimo aplikácie, týmto postupom aplikácia zo zariadení príjemcov neodstráni.</li>
-    </ul>
-    <p>Podrobné retenčné lehoty vrátane prípadných výnimiek a vybavenia e-mailových žiadostí: {{RETENTION_AND_REQUEST_DEADLINE}}.</p>
+    <h2>4. Lokálne ukladanie a zálohovanie zariadenia</h2>
+    <p>
+      Lokálna databáza (Room) aj archivované fotografie sú uložené v súkromnom úložisku aplikácie.
+      Automatické zálohovanie systému Android (<code>allowBackup="false"</code>) aj prenos citlivej databázy, preferencií a priečinka <code>receipts</code> sú v manifeste a pravidlách zálohovania zablokované.
+      Odhlásenie čistí databázovú kópiu faktúr, dočasný priečinok kamery a PDF exporty. Archivované fotografie v <code>filesDir/receipts/</code> sa pri odhlásení všetky automaticky nemažú.
+    </p>
   </section>
+
+  <section>
+    <h2>5. Retenčné lehoty a vymazanie údajov</h2>
+    <ul>
+      <li><strong>Účet a cloudové doklady (<code>users/{uid}/invoices/*</code>):</strong> výmaz spustíte v aplikácii cez <em>Nastavenia &rarr; Vymazať účet a všetky dáta</em>. Postup maže známe lokálne snímky a záznamy, cloudové doklady a profil, následne Firebase Auth účet. Vyžaduje pripojenie a prípadne nové prihlásenie; pri chybe môže zostať čiastočne dokončený. Kontakt pre žiadosť je na <a href="./account-deletion.html">stránke vymazania účtu</a>; prevádzkovateľ musí pred zverejnením potvrdiť postup a lehoty vybavenia.</li>
+      <li><strong>Dočasné súbory na zariadení:</strong> PDF exporty v <code>cacheDir</code> sa čistia pri ďalšom exporte a odhlásení, bez automatického 24-hodinového časovača. Staré súbory fotoaparátu sa čistia pri ďalšom vytvorení snímky (vek nad 24 hodín), pri odhlásení alebo výmaze účtu.</li>
+      <li><strong>Snímka odoslaná na cloudové AI vyťaženie:</strong> prenáša sa jednorazovo za účelom vyťaženia polí dokladu; aplikácia obrázok neukladá do cloudovej databázy Firestore.</li>
+      <li><strong>Záznamy o overení platieb (<code>billingTokens</code>):</strong> serverová implementácia eviduje technické údaje na idempotenciu a prevenciu zneužitia. Klientsky výmaz účtu ich nemaže a v kóde nie je automatická lehota ich odstránenia. Konkrétnu dobu a právny dôvod uchovania musí prevádzkovateľ stanoviť pred spustením nákupov; tento návrh neustanovuje desaťročnú lehotu.</li>
+    </ul>
+  </section>
+
   <section>
     <h2>6. Vaše práva</h2>
-    <p>Na uvedenom kontakte môžete požiadať o prístup, opravu, výmaz, obmedzenie spracúvania a prenosnosť údajov alebo uplatniť námietku v rozsahu príslušného právneho základu. PDF export je prehľad dokladov; samotný PDF výkaz sa neprezentuje ako úplné splnenie práva na prenosnosť. Môžete podať sťažnosť príslušnému dozornému orgánu, na Slovensku Úradu na ochranu osobných údajov SR.</p>
+    <p>
+      Podľa nariadenia GDPR máte právo na prístup k svojim údajom, opravu (priamo v detaile dokladu v aplikácii), výmaz, obmedzenie spracúvania, prenosnosť údajov (export do PDF) a podanie sťažnosti na Úrad na ochranu osobných údajov SR.
+    </p>
   </section>
 </body>
 </html>

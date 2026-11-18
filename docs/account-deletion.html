@@ -44,32 +44,36 @@
 </head>
 <body>
   <h1>Vymazanie účtu a údajov</h1>
-  <p class="meta">NÁVRH - pred zverejnením doplňte označené údaje. Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>). <a href="./privacy-policy.html">Zásady ochrany osobných údajov</a>.</p>
+  <p class="meta">Aplikácia: Blesková Faktúra (<code>sk.bizagent.bleskovafaktura</code>) • <a href="./privacy-policy.html">Zásady ochrany osobných údajov</a></p>
+  <p><strong>Technický návrh pred zverejnením (18. 11. 2026):</strong> prevádzkovateľ musí potvrdiť kontaktné údaje, proces overenia vlastníctva a lehoty spracovania žiadostí.</p>
+
   <section>
-    <h2>1. Výmaz v aplikácii</h2>
+    <h2>1. Spustenie výmazu priamo v aplikácii</h2>
     <ol>
-      <li>Otvorte Bleskovú Faktúru a prihláste sa do účtu, ktorý chcete zmazať.</li>
-      <li>V karte <strong>Nastavenia</strong> vyberte <strong>Vymazať účet a všetky dáta</strong>.</li>
-      <li>Skontrolujte upozornenie a potvrďte výmaz. Počkajte na potvrdenie dokončenia. Ak aplikácia vyžiada nové prihlásenie, znovu overte svoj účet a postup zopakujte.</li>
+      <li>Otvorte aplikáciu <strong>Blesková Faktúra</strong> a prihláste sa do svojho účtu Google.</li>
+      <li>Na spodnej lište otvorte kartu <strong>Nastavenia</strong>.</li>
+      <li>V sekcii <strong>Nebezpečná zóna</strong> kliknite na <strong>Vymazať účet a všetky dáta</strong> a potvrďte dialóg.</li>
     </ol>
-    <p>Cloudový výmaz potrebuje pripojenie. Pri chybe siete nemusí byť celý postup dokončený; postupujte podľa hlásenia v aplikácii alebo kontaktujte prevádzkovateľa. Samotné odhlásenie účet nemaže.</p>
+    <p>Výmaz sa začne po potvrdení. Cloudové kroky vyžadujú pripojenie a môžu vyžadovať nové prihlásenie. Pri chybe môže byť výmaz čiastočný; skontrolujte výslednú správu a pri probléme kontaktujte podporu. Až úspešné dokončenie odhlási účet v aplikácii.</p>
   </section>
+
   <section>
-    <h2>2. Žiadosť bez nainštalovanej aplikácie</h2>
-    <p>O vymazanie môžete požiadať e-mailom bez opätovnej inštalácie aplikácie. Správu pošlite z e-mailovej adresy priradenej k účtu alebo uveďte túto adresu, aby sme mohli bezpečne overiť vlastníctvo. Heslo ani prihlasovací kód nám neposielajte.</p>
-    <p>Prevádzkovateľ: <strong>{{OPERATOR_NAME}}</strong>. Kontakt: <a href="mailto:{{PRIVACY_CONTACT_EMAIL}}">{{PRIVACY_CONTACT_EMAIL}}</a>.</p>
-    <a class="cta" href="mailto:{{PRIVACY_CONTACT_EMAIL}}?subject=Bleskova%20Faktura%20-%20ziadost%20o%20vymazanie%20uctu">Pripraviť e-mailovú žiadosť</a>
-    <p>Do predmetu napíšte <strong>Blesková Faktúra - žiadosť o vymazanie účtu</strong>. V správe uveďte prihlasovací e-mail a požiadavku na výmaz účtu a súvisiacich údajov. Otvorenie e-mailovej aplikácie ešte neznamená odoslanie žiadosti.</p>
-    <p>Lehota a postup vybavenia žiadosti: {{RETENTION_AND_REQUEST_DEADLINE}}.</p>
+    <h2>2. Žiadosť o vymazanie účtu cez web / e-mail (ak už nemáte zariadenie)</h2>
+    <p>
+      Ak ste aplikáciu odinštalovali alebo nemáte prístup k telefónu, požiadajte o vymazanie vášho účtu a cloudových záznamov zaslaním požiadavky z e-mailovej adresy priradenej k účtu Google:
+    </p>
+    <a class="cta" href="mailto:support@vorkei.com?subject=%C5%BDiados%C5%A5%20o%20vymazanie%20%C3%BA%C4%8Dtu%20%E2%80%94%20Bleskov%C3%A1%20Fakt%C3%BAra&body=Dobr%C3%BD%20de%C5%88%2C%0A%0A%C5%BEiadam%20o%20trval%C3%A9%20vymazanie%20m%C3%B4jho%20%C3%BA%C4%8Dtu%20v%20aplik%C3%A1cii%20Bleskov%C3%A1%20Fakt%C3%BAra%20(sk.bizagent.bleskovafaktura)%20vr%C3%A1tane%20v%C5%A1etk%C3%BDch%20cloudov%C3%BDch%20dokladov%20a%20%C5%A1tatist%C3%ADk.%0A%0APrihlasovac%C3%AD%20e-mail%20(Google)%3A%20%0A">
+      Odoslať žiadosť o vymazanie účtu
+    </a>
+    <p><small>Táto stránka otvára e-mailového klienta; nemá automatický serverový formulár. Spôsob overenia vlastníctva a lehotu odpovede musí potvrdiť prevádzkovateľ. Neposielajte heslá, platobné údaje ani tokeny.</small></p>
   </section>
+
   <section>
-    <h2>3. Rozsah výmazu a výnimky</h2>
+    <h2>3. Rozsah mazaných a uchovávaných údajov</h2>
     <ul>
-      <li>Postup zahŕňa účet Firebase Authentication, používateľský profil a podkolekciu dokladov vo Firestore; na zariadení, z ktorého je výmaz úspešne vykonaný, aj lokálnu databázu, archivované fotografie a dočasné súbory aplikácie.</li>
-      <li>Kópie dokladov, ktoré ste sami exportovali alebo zdieľali iným príjemcom, aplikácia zo zariadení týchto príjemcov neodstráni.</li>
-      <li>V bezplatnej internej verzii sa nákupy neponúkajú. Pri prípadnej platenej verzii sa musí osobitne uviesť rozsah a lehota uchovávania záznamov o nákupoch; hash spojený s UID alebo objednávkou nie je anonymný údaj. Automatická desaťročná lehota pre všetky technické tokeny sa neuplatňuje.</li>
+      <li><strong>Rozsah implementovaného výmazu:</strong> Firebase Auth účet, Firestore profil <code>users/{uid}</code> a podkolekcia dokladov, Room záznamy, známe archivované fotografie, dočasná kamera a PDF cache. Jednotlivé kroky môžu zlyhať; neexistuje záruka vymazania osirelých súborov alebo údajov na inom zariadení iba úspechom lokálneho kroku.</li>
+      <li><strong>Technické záznamy nákupov:</strong> <code>billingTokens</code> sa týmto klientskym postupom nemažú. Automatická retencia zatiaľ nie je implementovaná; konkrétnu lehotu a dôvod uchovania musí potvrdiť prevádzkovateľ pred spustením nákupov.</li>
     </ul>
-    <p>Ďalšie odôvodnené retenčné výnimky: {{RETENTION_EXCEPTIONS_OR_NONE}}.</p>
   </section>
 </body>
 </html>

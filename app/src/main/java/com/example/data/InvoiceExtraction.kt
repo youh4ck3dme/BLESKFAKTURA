@@ -9,7 +9,8 @@ data class ExtractedInvoiceJson(
     val vatAmount: Double? = null,
     val vatRate: Double? = null,
     val category: String = "Iné",
-    val description: String? = null
+    val description: String? = null,
+    val reviewWarnings: List<String> = emptyList()
 )
 
 sealed interface AiExtractionResult {

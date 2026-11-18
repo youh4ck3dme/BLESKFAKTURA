@@ -1,71 +1,81 @@
-# Google Play Console - Blesková Faktúra
+# Google Play: pracovný návrh deklarácií
 
-Overené 16. 11. 2026. Package: `sk.bizagent.bleskovafaktura`. Tento dokument rozlišuje bezplatnú internú zostavu a budúcu platenú verziu. Presnú verziu a výsledok testov čítajte z aktuálneho release reportu.
+Technická revízia 18. 11. 2026 pre `sk.bizagent.bleskovafaktura`, verziu **1.1 / 2**.
+Tento dokument nie je vyplnený formulár ani potvrdenie vydania. Vychádza z kódu;
+vlastník musí potvrdiť reálne nasadenie, prevádzkové údaje a aktuálne položky Play
+Console. [Stav projektu a blokéry](project-status.md) sú aktuálny stav overenia.
 
-## 1. Interné testovanie - čo je skutočne potrebné
+## Právne stránky a prístup recenzenta
 
-- Play Console > Testovanie a vydávanie > Testovanie > Interné testovanie: nahrať AAB podpísaný správnym upload kľúčom, vybrať testerov, skontrolovať a zverejniť interné vydanie.
-- Interný test má limit 100 testerov. Testeri potrebujú Google účet, povolenie v zvolenom zozname a následné prihlásenie do testu cez opt-in odkaz. Nainštalujú aplikáciu z Google Play pod tým istým účtom.
-- Pred prvým interným vydaním nemusí byť dokončený celý záznam v obchode. Pre výlučne interný track sa nevyžaduje Data safety formulár; požiadavky na korektné spracúvanie údajov tým nezanikajú.
-- Podmienka 12 testerov počas 14 dní patrí k žiadosti o produkčný prístup na príslušnom osobnom účte, nie k spusteniu interného testu.
-- Bezplatná interná zostava neponúka kredity ani nákupy. Nie je potrebné vytvoriť nákupné produkty ani nasadiť Functions iba na testovanie lokálneho flow.
+- [Privacy návrh](privacy-policy.html) a [návrh výmazu účtu](account-deletion.html)
+  vyžadujú potvrdenie prevádzkovateľa, kontaktu, právnych základov, retencie a lehôt.
+- Po schválení publikovať iba tieto dve HTML stránky. Celý interný priečinok `docs/`
+  sa nemá zverejniť ako právny web; nasadenie nie je súčasťou údržby.
+- Verejné HTTPS URL doplniť až po kontrole živého obsahu. Resource
+  `privacy_policy_url` je zatiaľ prázdny, aplikácia poskytuje lokálny informačný text.
+- Release nemá demo prihlásenie. App Access musí vysvetliť skutočný postup
+  prihlásenia a prístupu ku všetkým kontrolovaným funkciám. Nepredpokladať, že
+  vlastný Google účet recenzenta alebo úspešné debug demo automaticky postačí.
+  Postup otestovať na distribuovanom release pred podaním.
 
-Zdroje: [Interné testovanie](https://support.google.com/googleplay/android-developer/answer/9845334), [Data safety](https://support.google.com/googleplay/android-developer/answer/10787469), [Produkčný prístup](https://support.google.com/googleplay/android-developer/answer/14151465).
+## Dáta podľa implementácie
 
-## 2. Firebase Auth, podpisy a App Check
+| Tok | Technický obsah a účel | Čo overiť pred deklarovaním |
+| --- | --- | --- |
+| Google sign-in | UID, e-mail, meno, URL profilovej fotografie cez Firebase Auth | Provider, prístup recenzenta a privacy údaje |
+| Doklady | Dodávateľ, IČO/DIČ, dátumy, sumy/DPH, mena, kategória a stav; Room a Firestore users/{uid}/invoices | Release, nasadené rules, cloudový zápis a výmaz |
+| Fotografie | Kamera/Photo Picker, súkromný archív; obrázok sa odosiela Firebase AI Logic | Podmienky služby/plánu, príjemcovia a ich uchovávanie |
+| Nákupy | Server overuje Play purchase token, billingTokens eviduje idempotenciu; bez čísel kariet v appke | Deployment, testovací nákup, RTDN, retencia a výmaz |
+| Integrita | App Check; Play Integrity v release | Distribučný certifikát, Firebase app ID, enforcement a verdicts |
+| PDF | Lokálny výkaz zdieľaný vedomou akciou používateľa | Export a cieľ zdieľania na zariadení |
 
-- Firebase projekt: `gen-lang-client-0115180408`; Android app: `1:356987646276:android:45325d3dea6c248380e711`.
-- Firestore DB: `ai-studio-android-bleskovf-056698ab-4e20-4c12-b4ec-52ee9d53a81d`, lokalita `europe-west2`. Nezamieňať ju s predvolenou databázou `(default)`.
-- Authentication > Sign-in method > Google: zapnutý poskytovateľ; Android OAuth klient musí zodpovedať package a podpisu, pod ktorým je aplikácia nainštalovaná.
-- Play Console > Integrita aplikácie: odlíšiť **Play App Signing certificate** od **upload certificate**. Inštaláciu z Play podpisuje Play App Signing kľúč. Upload kľúč slúži na prijatie AAB pri nahratí.
-- Firebase Project settings > Android app: registrovať potrebný SHA-1 pre Google Sign-In aj SHA-256 pre App Check. Po zmenách stiahnuť aktuálny `google-services.json` do modulu `app`; neinštalovať konfiguráciu cudzieho Firebase projektu.
-- Firebase App Check > Android app > Play Integrity: rovnaký Cloud projekt ako v Play Console. Zachovať vynucovanie; chybný podpis sa neopravuje vypnutím ochrany.
-- Side-load debug APK s debug podpisom nie je ekvivalent inštalácie release cez Google Play. Debug provider je iba vývojový nástroj; jeho token nepublikovať.
+Aktuálny AI model určuje `InvoiceAiService`, nie tento dokument. Cloudový prenos
+nemožno deklarovať ako offline spracúvanie iba preto, že fotografia zostáva aj lokálne.
 
-Zdroje: [Podpisovanie](https://developer.android.com/studio/publish/app-signing), [Google Sign-In](https://firebase.google.com/docs/auth/android/google-signin), [App Check Play Integrity](https://firebase.google.com/docs/app-check/android/play-integrity-provider).
+Kategórie Collected/Shared, required/optional a účely v Data Safety treba vybrať
+podľa aktuálnych definícií Google Play a aktivovaných SDK. Táto tabuľka nenahrádza
+rozhodnutie o zmluvných spracovateľoch alebo výnimkách z „sharing“.
 
-## 3. Cloud AI - technická kvóta nie je povolenie na každú distribúciu
+## Výmaz a retencia
 
-- Model `gemini-3.8-flash` je podporovaný a technicky dostupný aj v obmedzenom bezplatnom programe Gemini Developer API.
-- Aktuálne Gemini Additional Terms však pri sprístupnení API klienta používateľom v EEA, Švajčiarsku alebo UK vyžadujú **Paid Services**. Prístup Gemini API sa za takú službu považuje cez projekt s aktívnym Cloud Billing účtom. Bezplatný Spark projekt preto nie je automaticky prípustnou cestou pre distribúciu cloudového skenovania slovenským testerom.
-- Kým nie je zvolená a overená prípustná cloudová prevádzka, interná zostava má používať lokálny postup alebo testovacie doklady bez cloudového prenosu podľa aktuálnej implementácie. Nesľubovať úspešný cloudový AI test bez jeho vykonania.
-- Bezplatná kvóta má limity a môže vracať HTTP 429. Použitie plateného programu vyžaduje výber aktívneho billing účtu a nastavenie nákladových kontrol. Rozpočtový alert nie je finančný strop.
-- Firebase AI Logic používa vlastnú používateľskú kvótu, predvolene 100 RPM; nižšia testovacia kvóta sa nastavuje v Google Cloud Console > APIs & Services > Firebase AI Logic API > Quotas. Výsledná kapacita je obmedzená aj kvótou poskytovateľa modelu.
+Výmaz účtu má viac krokov: lokálne záznamy/známe fotografie, Firestore a Firebase
+Auth. Chyba siete alebo požiadavka na nové prihlásenie môže postup prerušiť.
+Neoznačovať ho za bezpodmienečne okamžitý alebo overený na všetkých zariadeniach.
+E-mailový odkaz nie je serverový formulár; prevádzkovateľ musí potvrdiť proces a lehotu.
+`billingTokens` klientsky výmaz nemaže a automatická retencia zatiaľ nie je v kóde.
+Pevnú desaťročnú lehotu bez potvrdenia neuvádzame.
 
-Zdroje: [Modely](https://firebase.google.com/docs/ai-logic/models), [Ceny](https://firebase.google.com/docs/ai-logic/pricing), [Kvóty](https://firebase.google.com/docs/ai-logic/quotas), [Gemini podmienky](https://ai.google.dev/gemini-api/terms).
+## Produkty a finančné funkcie
 
-## 4. Právne stránky pred zberom reálnych dát a širším vydaním
+Katalóg klienta a backendu očakáva:
 
-- `docs/privacy-policy.html` a `docs/account-deletion.html` sú šablóny, nie potvrdené publikované zásady. Vyplniť prevádzkovateľa, adresu, kontakt, skutočný AI režim, právne základy, príjemcov/prenosy, retenčné lehoty a postup spracovania žiadostí.
-- `node scripts/stage-legal-pages.mjs` odmietne nevyriešené polia `{{...}}` a označenie návrhu. Publikovať iba dve HTML cez `firebase.legal.json`; interný priečinok `docs/` sa nikdy nepublikuje celý.
-- Cieľové adresy po nasadení: `https://bleskova-faktura-legal-356987.web.app/privacy-policy.html` a `https://bleskova-faktura-legal-356987.web.app/account-deletion.html`. Overiť HTTP 200 a obsah, potom nastaviť živú adresu privacy v aplikácii a obe adresy v príslušných poliach Console.
-- Výmaz účtu sa začína v nastaveniach. Dokončenie vyžaduje sieť, môže vyžadovať nové prihlásenie a musí byť potvrdené výsledkom. Neuvádzať nepodložený sľub okamžitého výmazu ani zmazania PDF presne po 24 hodinách.
-- Hash nákupného tokenu spojený s UID/objednávkou je pseudonymný záznam, nie anonymný údaj. Desaťročná účtovná lehota sa nesmie automaticky priradiť všetkým technickým tokenom.
+- `blesk_premium_monthly` — predplatné;
+- `blesk_credits_10`, `blesk_credits_50`, `blesk_credits_100` — spotrebné balíky;
+- RTDN topic `play-billing-rtdn`, backend región `europe-west1`.
 
-Zdroje: [User Data](https://support.google.com/googleplay/android-developer/answer/10144311), [Account deletion](https://support.google.com/googleplay/android-developer/answer/13327111).
+Existencia v kóde nepotvrdzuje produkty, ceny, dostupnosť ponúk ani živé pripísanie
+kreditov. Pri rozpočte 0 € sa backend nenasadzuje a nákup sa neoznačuje za overený.
+[Backendový návod](../functions/README.md) opisuje implementáciu a testové hranice.
 
-## 5. Data safety - podklady pre closed/open/production
+Aplikácia eviduje doklady a výdavky. Kód neimplementuje pôžičky, investície alebo
+prevody medzi používateľmi; Financial Features položky vybrať podľa aktuálneho
+formulára a distribuovaných funkcií.
 
-Výlučne interná distribúcia je z formulára oslobodená. Pred prechodom na iný track odpovede zostaviť podľa všetkých aktívnych variantov a reálnych SDK tokov:
+## Oprávnenia a podpis
 
-- **Personal info:** meno, e-mail, User IDs pri Google/Firebase prihlásení; funkčnosť aplikácie a správa účtu.
-- **Doklady:** údaje o dodávateľovi, dátumoch a sumách ukladané vo Firestore; podľa znenia formulára finančné údaje a obsah dokumentov. Samotná lokálna kópia bez prenosu nie je cloudový zber.
-- **Photos:** označiť prenos snímok, ak daný variant používa cloudovú AI. Lokálne OCR bez odosielania nesmie byť deklarované ako rovnaký cloudový tok.
-- **Device or other IDs / bezpečnostné údaje:** zohľadniť skutočný zber SDK App Check/Play Integrity.
-- **Purchase history:** iba ak je zapnutá verzia zbierajúca záznamy o nákupoch; neprezentovať vypnutý internal nákupný flow ako uskutočnené platby.
-- Prenos spracovateľovi sa vo formulári nemusí klasifikovať ako **Shared**, ak spĺňa výnimku pre poskytovateľa služieb. Rozhodnutie vychádza zo zmluvy a použitia, nie zo samotného názvu Firebase.
-- Uviesť šifrovaný prenos, dostupnú cestu výmazu a pravdivé retenčné výnimky. Netvrdiť automaticky, že všetky údaje sú iba krátkodobo spracúvané v pamäti.
+Zdrojový manifest deklaruje INTERNET a CAMERA, kamera nie je povinný hardvér.
+Fotoaparát má runtime žiadosť a galéria používa Photo Picker. Ďalšie oprávnenia
+môžu pridať SDK; rozhoduje merged manifest finálneho release.
 
-Zdroj: [Data safety formulár](https://support.google.com/googleplay/android-developer/answer/10787469).
+Pred interným vydaním overiť:
 
-## 6. App access, ostatné deklarácie a platená verzia
+- existujúci upload certifikát a Play App Signing certifikát samostatne;
+- Firebase app, fingerprints, App Check s Play Integrity;
+- Google sign-in, sken/refund, export, výmaz a nákupy na release;
+- aktuálne podmienky testovacieho tracku konkrétneho Play účtu;
+- potvrdené právne údaje, živé HTTPS odkazy a prístup recenzenta.
 
-- **App access pre review:** ak je prihlásenie povinné, dodať opakovane použiteľný testovací účet a kompletný postup v angličtine do Console. Pri Google Sign-In uviesť všetky potrebné údaje a kroky. Neodkazovať recenzenta iba na vytvorenie vlastného účtu; nepridávať heslá do Gitu.
-- **Financial features:** pravdivo opísať evidenciu dokladov a výdavkov; aplikácia neposkytuje úvery, investície ani prevody peňazí. Konkrétne políčka zvoliť podľa aktuálneho formulára.
-- **Ads:** bez reklamných SDK v kontrolovanom kóde. **Audience/content rating/government/health:** vyplniť podľa skutočného obsahu a zamýšľaného publika, nevymýšľať kategórie.
-- **CAMERA** sama nevyžaduje formulár pre široký prístup do galérie. Ten sa týka najmä `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO`; používa sa systémový picker.
-- Platenú verziu aktivovať až po overení backendu, väzby nákupu na účet, serverovej kontroly plateného AI nároku a nákupných E2E testov. Samotné App Check nie je kreditový paywall.
-- Pripravené produktové ID: `blesk_premium_monthly`, `blesk_credits_10`, `blesk_credits_50`, `blesk_credits_100`. Pri predplatnom overiť presný mesačný base plan a oprávnenosť ponuky, nevyberať ľubovoľnú prvú ponuku. Skutočné ceny schvaľuje vlastník v Console.
-- RTDN topic: `projects/gen-lang-client-0115180408/topics/play-billing-rtdn`. Doručenie testovacej správy do topicu nie je dôkaz spracovania nákupu backendom.
-
-Zdroje: [App access](https://support.google.com/googleplay/android-developer/answer/15748846), [Oprávnenia](https://support.google.com/googleplay/android-developer/answer/16558241), [Payments policy](https://support.google.com/googleplay/android-developer/answer/10281818).
+Artefakt pripravovať podľa [release návodu](release-signing-and-smoke-test.md).
+Aktuálne požiadavky sú v [Google Play Policy Center](https://play.google.com/about/developer-content-policy/)
+a [návode Data Safety](https://support.google.com/googleplay/android-developer/answer/10787469).
+Nevytvárať nový podpisový kľúč ani automaticky potvrdzovať deklarácie.

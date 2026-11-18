@@ -87,7 +87,6 @@ export interface BillingStore {
   runInTransaction<T>(
     fn: (tx: {
       getToken(tokenHash: string): Promise<TokenRecord | null>;
-      userExists(uid: string): Promise<boolean>;
       setToken(tokenHash: string, record: TokenRecord): void;
       grantInAppCredits(uid: string, creditsDelta: number): Promise<void>;
       setUserSubscription(uid: string, isSubscribed: boolean, expiryMillis: number | null): Promise<void>;
@@ -206,9 +205,6 @@ export async function verifyAndGrantPlayPurchase(
 
     const txResult = await store.runInTransaction<VerifyPurchaseResult>(async (tx) => {
       const existing = await tx.getToken(tokenHash);
-      if (!(await tx.userExists(input.uid))) {
-        throw new VerificationError("failed-precondition", "Create or restore your app profile before verifying a purchase.");
-      }
       if (existing) {
         requireTokenIdentity(existing, input);
         if (existing.ownerUid !== input.uid) {
@@ -279,9 +275,6 @@ export async function verifyAndGrantPlayPurchase(
 
   const subResult = await store.runInTransaction<VerifyPurchaseResult>(async (tx) => {
     const existing = await tx.getToken(tokenHash);
-    if (!(await tx.userExists(input.uid))) {
-      throw new VerificationError("failed-precondition", "Create or restore your app profile before verifying a purchase.");
-    }
     if (existing) {
       requireTokenIdentity(existing, input);
       if (existing.ownerUid !== input.uid) {
@@ -397,10 +390,6 @@ async function reconcileSubscriptionFromPlay(
     if (!existing) {
       return { handled: false, action: "UNKNOWN_TOKEN" };
     }
-    if (!(await tx.userExists(existing.ownerUid))) {
-      // A delayed billing notification must never recreate a deleted app account.
-      return { handled: true, action: "DELETED_ACCOUNT" };
-    }
     await tx.setUserSubscription(existing.ownerUid, isActive, sub.expiryTimeMillis ?? null);
     tx.setToken(tokenHash, {
       ...existing,
@@ -437,9 +426,6 @@ async function reconcileInAppFromPlay(
     const existing = await tx.getToken(tokenHash);
     if (!existing || existing.status === "REVOKED") {
       return { handled: false, action: "NOOP" };
-    }
-    if (!(await tx.userExists(existing.ownerUid))) {
-      return { handled: true, action: "DELETED_ACCOUNT" };
     }
     if (existing.creditsGranted > 0) {
       await tx.grantInAppCredits(existing.ownerUid, -existing.creditsGranted);

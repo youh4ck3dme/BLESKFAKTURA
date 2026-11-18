@@ -20,6 +20,35 @@ import java.io.IOException
 @Config(sdk = [36])
 class PdfExporterTest {
 
+    @Test
+    fun cleanExports_preservesUnrelatedDocumentsAndCameraCache() {
+        val directory = File(ApplicationProvider.getApplicationContext<Context>().cacheDir, "pdf-cleanup-test").apply { mkdirs() }
+        try {
+            val export = File(directory, "Prehlad_dokladov_123.pdf").apply { writeText("old export") }
+            val unrelated = File(directory, "private-attachment.pdf").apply { writeText("keep") }
+            val camera = File(directory, "capture_123.jpg").apply { writeText("keep") }
+            PdfExporter.cleanOldExportPdfs(directory)
+            assertFalse(export.exists())
+            assertEquals("keep", unrelated.readText())
+            assertEquals("keep", camera.readText())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun report_usesCanonicalCentsAndHandlesMissingOptionalTaxFields() {
+        val invoice = Invoice(
+            supplierName = "Synthetic supplier with a deliberately long business name",
+            issueDate = "18.11.2026", totalAmount = 999.0, totalAmountCents = 123L,
+            vatAmount = null, vatAmountCents = null, ico = null, dic = null
+        )
+        val (summary, rows) = PdfExporter.prepareReport(listOf(invoice), "test period")
+        assertEquals(123L, summary.totalInvoicedCents)
+        assertEquals(0L, summary.totalVatCents)
+        assertEquals("2026-11-18", rows.single().dateText)
+        assertEquals("1,23 €", rows.single().amountText)
+        assertTrue(rows.single().supplierText.endsWith("..."))
+    }
+
     private val sampleInvoices = listOf(
         Invoice(
             id = "inv-1",
@@ -70,20 +99,6 @@ class PdfExporterTest {
         assertEquals("2026-11-10", rows[0].dateText)
         assertEquals("2026-11-16", rows[1].dateText)
         assertEquals("60,00 €", rows[1].amountText)
-    }
-
-    @Test
-    fun prepareReport_distinguishesUnknownVatFromConfirmedZero() {
-        val unknown = sampleInvoices[0].copy(vatAmount = null, vatAmountCents = null, vatRate = null)
-        val zero = sampleInvoices[1].copy(vatAmount = 0.0, vatAmountCents = 0L, vatRate = 0.0)
-        val (unknownSummary, unknownRows) = PdfExporter.prepareReport(listOf(unknown), "11/2026")
-        assertEquals(1, unknownSummary.invoiceCountWithoutVat)
-        assertEquals("-", unknownSummary.formattedTotalVat)
-        assertEquals("-", unknownRows.single().vatText)
-        val (mixedSummary, mixedRows) = PdfExporter.prepareReport(listOf(unknown, zero), "11/2026")
-        assertEquals(1, mixedSummary.invoiceCountWithoutVat)
-        assertEquals("0,00 €", mixedSummary.formattedTotalVat)
-        assertEquals("0,00 €", mixedRows[1].vatText)
     }
 
     @Test

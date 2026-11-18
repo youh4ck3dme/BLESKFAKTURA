@@ -1,52 +1,73 @@
 # Blesková Faktúra
 
-Android aplikácia na evidenciu dokladov, kontrolu rozpoznaných údajov a PDF export.
+Android aplikácia pre slovenských živnostníkov: odfotenie alebo import dokladu,
+AI extrakcia účtovných údajov, kontrola a uloženie dokladu, prehľad a PDF export.
+Rozhranie používa Kotlin a Jetpack Compose; dáta spracúva lokálne cez Room alebo
+po prihlásení cez Firebase.
 
-## Interné testovanie
+## Kde začať
 
-Variant `internal` používa skutočné OCR v zariadení (bundled ML Kit), lokálny profil alebo voliteľný Google účet a neponúka nákupy. Fotografie neposiela do Firebase AI. Pri lokálnom profile ostávajú doklady po odhlásení zachované až do vymazania profilu.
+- [Aktuálny stav a blokery](docs/project-status.md) — dôkazy s dátumom a commitom, PASS / FAIL / NOT VERIFIED.
+- [Architektúra a dátové toky](docs/architecture.md).
+- [Lokálne zostavenie a testy](docs/local-verification.md).
+- [Firebase, App Check a diagnostika](docs/firebase-and-troubleshooting.md).
+- [Podpisovanie a release smoke test](docs/release-signing-and-smoke-test.md).
+- [Backend overovania nákupov](functions/README.md).
+- [Podklady pre Play Console](docs/play-console-declarations.md), [ochrana súkromia](docs/privacy-policy.html) a [vymazanie účtu](docs/account-deletion.html).
 
-- Package: `sk.bizagent.bleskovafaktura`
-- `minSdk = 24`, `targetSdk = 36`, `compileSdk = 36.1`
-- JDK **21** je potrebné aj pre Robolectric testy Androidu 36.
-- Firebase: `gen-lang-client-0115180408`
-- Firestore: pomenovaná databáza `ai-studio-android-bleskovf-056698ab-4e20-4c12-b4ec-52ee9d53a81d` v `europe-west2`.
+## Identita aplikácie
 
-Pripraviť SDK a zostavu v Google Cloud Shell:
+Zdrojom týchto hodnôt je [app/build.gradle.kts](app/build.gradle.kts);
+nejde o potvrdenie stavu v Play Console.
 
-```bash
-bash scripts/cloud-shell-build-internal.sh
-```
+| Parameter | Hodnota v kóde |
+| --- | --- |
+| `applicationId` | `sk.bizagent.bleskovafaktura` |
+| Android namespace | `com.example` |
+| `versionName` / `versionCode` | `1.1` / `2` |
+| `minSdk` / `targetSdk` / `compileSdk` | `24` / `36` / `36.1` |
+| Release optimalizácia | R8 minifikácia aj zmenšovanie zdrojov zapnuté |
 
-V pripravenom prostredí s reálnou Firebase konfiguráciou `app/google-services.json`:
+## Režimy aplikácie
 
-```bash
-bash scripts/build-internal.sh
-```
+| Režim | Čo možno overovať |
+| --- | --- |
+| Debug bez Firebase konfigurácie, napríklad PR artefakt z CI | Lokálne demo, Room a výslovne zvolené lokálne OCR so zabaleným modelom. Živý cloudový AI sken ani Google prihlásenie nie sú nakonfigurované. |
+| Debug s lokálnym `google-services.json` | Živé Firebase volania po správnej konfigurácii a súkromnej registrácii App Check pre danú inštaláciu. Demo kredity zostávajú lokálne. |
+| Release | Play Integrity a pôvodná podpisová identita; demo prihlásenie je zablokované. Play nákupy potrebujú samostatne overený backend a distribúciu. |
 
-Bez `KEYSTORE_PATH`, `STORE_PASSWORD` a `KEY_PASSWORD` skript vytvorí **nepodpísaný AAB**. Pre upload nastavte tieto premenné a prípadne `KEY_ALIAS` na pôvodný upload kľúč. Privátny kľúč ani heslá nepatria do Gitu. Samotný verejný certifikát na podpisovanie nestačí.
+V skeneri možno výslovne zapnúť **Lokálne OCR · bez kreditu**. Model sa dodáva v APK;
+rozpoznanie fotografie nevyžaduje cloudové AI ani prvotné stiahnutie modelu.
+Výsledky sú návrhy na kontrolu, chýbajúca DPH sa nedopĺňa odhadom.
+Cloudový účet môže uložené údaje ďalej synchronizovať; demo ich ukladá lokálne.
+Limity, diagnostické metriky SDK a hranice testov sú v [architektúre](docs/architecture.md#lokalne-ocr).
 
-Samostatné kontroly:
+Cloudový AI skener používa Firebase AI Logic, model `gemini-3.5-flash-lite`, MINIMAL thinking,
+limit 4096 výstupných tokenov a aplikačný deadline 60 sekúnd. Zdrojom je
+[InvoiceAiService.kt](app/src/main/java/com/example/data/InvoiceAiService.kt);
+aplikácia nemá automatický prechod na iný model. Vlastný Gemini API kľúč v
+`BuildConfig` nie je súčasťou tohto toku.
 
-```bash
-./gradlew :app:testInternalDebugUnitTest :app:lintInternalDebug :app:lintInternalRelease
-./gradlew :app:connectedInternalDebugAndroidTest
-python3 scripts/verify-android-artifact.py cesta/k/suboru.aab
-pnpm --dir functions install --frozen-lockfile
-pnpm --dir functions test
-pnpm --dir functions run test:rules
-```
+## Rýchle lokálne overenie
 
-Device testy overujú skutočné lokálne OCR, Room, editáciu, PDF, odhlásenie, zachovanie lokálneho profilu a výmaz. Google Sign-In/App Check z Play treba potvrdiť samostatným testom po uploadnutí správne podpísanej zostavy. Úspešný build nie je dôkaz úspešného Google prihlásenia.
+Použi JDK 21, Node.js 22, pnpm 12.15.0, Android SDK 36.1 a repozitárový
+Gradle wrapper 9.3.1. Presný postup vrátane Firebase emulátorov je v
+[lokálnom návode](docs/local-verification.md). Testy repozitára používajú
+`demo-no-project`, nepotrebujú Android AVD a nesmú pristupovať do živého projektu.
 
-CI používa pri chýbajúcom secrete iba nefunkčnú Firebase fixture pre izolované testy. Upload AAB vzniká len pri nastavených `GOOGLE_SERVICES_JSON`, `UPLOAD_KEYSTORE_BASE64`, `STORE_PASSWORD` a `KEY_PASSWORD`; `KEY_ALIAS` je voliteľný. Fixture nikdy nie je konfigurácia na distribúciu.
+[CI workflow](.github/workflows/android-ci.yml) zostavuje debug APK, spúšťa
+backend aj Android testy a lint. PR zostavenia nedostávajú živú Firebase
+konfiguráciu. Zelené CI preto samo nepotvrdzuje úspešný živý sken ani pripravené
+vydanie v Google Play.
 
-## Právne stránky a ďalšie vydanie
+## Prevádzkové hranice
 
-Pravdivé deklarácie a presný postup sú v [docs/play-console-declarations.md](docs/play-console-declarations.md). Právne HTML sú **šablóny**, kým nie sú doplnené všetky `{{...}}`. Staging nevyplnené šablóny odmietne. Publikuje sa iba izolovaný legal hosting, nie celý `docs/`.
+Platí rozhodnutie **0 €: platený billing neaktivovať**. Lokálne overovanie
+nenasadzuje Functions, Firestore rules ani aplikáciu do Play. Dostupnosť živých
+AI volaní závisí od konfigurácie a aktuálnych kvót; nejde o prísľub neobmedzenej
+bezplatnej prevádzky. Podrobnosti a neoverené časti patria do
+[aktuálneho stavu](docs/project-status.md).
 
-## Produkčný variant
-
-Variant `production` zachováva cloudové AI a Billing kód, ale **nie je pripravený na platené vydanie**. Pred ním treba aktívny billing, overenú konfiguráciu, nákupné produkty, nasadenie Functions a dôveryhodný serverový AI endpoint s kontrolou nároku. Pri sprístupnení Gemini API používateľom v EEA/CH/UK vyžadujú aktuálne podmienky Paid Services. Postup budúceho backendu je v [functions/README.md](functions/README.md).
-
-Interný track nevyžaduje produkčný uzavretý test 12 testerov/14 dní. Podmienky interného a produkčného vydania sa posudzujú oddelene.
+Do Git nepatria `google-services.json`, App Check tajomstvá, prihlasovacie údaje,
+keystores, APK/AAB ani súkromné doklady a logy. Pri údržbe zachovaj rozpracované
+používateľské zmeny a do commitu vyber iba skontrolované súbory.

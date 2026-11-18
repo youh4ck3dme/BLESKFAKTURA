@@ -71,11 +71,6 @@ fun PricingScreen(
 ) {
     BackHandler { onNavigateBack() }
 
-    if (viewModel.isInternalTesting) {
-        InternalTestingScreen(onNavigateBack)
-        return
-    }
-
     val context = LocalContext.current
     val activity = context as? Activity
     val userStats by viewModel.userStats.collectAsState()
@@ -218,7 +213,7 @@ fun PricingScreen(
                     val outlineColor = MaterialTheme.colorScheme.outline
 
                     val subPriceLabel = catalogPrices[BillingProduct.PREMIUM_MONTHLY.productId]
-                        ?: "Cena momentálne nie je dostupná"
+                        ?: BillingProduct.PREMIUM_MONTHLY.fallbackPrice
 
                     Card(
                         modifier = Modifier
@@ -284,7 +279,7 @@ fun PricingScreen(
 
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 BenefitRow(text = "Neobmedzený počet skenov faktúr a blokov")
-                                BenefitRow(text = "AI vyťaženie údajov z dokladu")
+                                BenefitRow(text = "Prioritná AI extrakcia cez Firebase AI Logic")
                                 BenefitRow(text = "Bezpečná záloha na cloude (Firestore)")
                                 BenefitRow(text = "Export mesačných PDF reportov pre účtovníka")
                             }
@@ -347,7 +342,7 @@ fun PricingScreen(
                         CreditPackageRow(
                             title = BillingProduct.CREDITS_10.fallbackTitle,
                             price = catalogPrices[BillingProduct.CREDITS_10.productId]
-                                ?: "Cena nie je dostupná",
+                                ?: BillingProduct.CREDITS_10.fallbackPrice,
                             badgeText = "Štartovací",
                             badgeColor = MaterialTheme.colorScheme.secondary,
                             badgeTextColor = MaterialTheme.colorScheme.onSecondary,
@@ -358,7 +353,7 @@ fun PricingScreen(
                         CreditPackageRow(
                             title = BillingProduct.CREDITS_50.fallbackTitle,
                             price = catalogPrices[BillingProduct.CREDITS_50.productId]
-                                ?: "Cena nie je dostupná",
+                                ?: BillingProduct.CREDITS_50.fallbackPrice,
                             badgeText = "Najobľúbenejší",
                             badgeColor = MaterialTheme.colorScheme.primary,
                             badgeTextColor = MaterialTheme.colorScheme.onPrimary,
@@ -369,7 +364,7 @@ fun PricingScreen(
                         CreditPackageRow(
                             title = BillingProduct.CREDITS_100.fallbackTitle,
                             price = catalogPrices[BillingProduct.CREDITS_100.productId]
-                                ?: "Cena nie je dostupná",
+                                ?: BillingProduct.CREDITS_100.fallbackPrice,
                             badgeText = "Ekonomický",
                             badgeColor = MaterialTheme.colorScheme.primaryContainer,
                             badgeTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -607,34 +602,6 @@ fun CreditPackageRow(
             ) {
                 Text("Zakúpiť", fontWeight = FontWeight.Bold)
             }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun InternalTestingScreen(onNavigateBack: () -> Unit) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize().testTag("internal_testing_screen"),
-        topBar = {
-            TopAppBar(
-                title = { Text("Interné testovanie") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Späť")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier.padding(padding).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text("Lokálne čítanie dokladov", style = MaterialTheme.typography.headlineSmall)
-            Text("Táto interná verzia číta obrázky priamo v zariadení pomocou OCR. Snímky sa neposielajú do cloudovej AI. Pred uložením skontrolujte a doplňte údaje vrátane DPH.")
-            Text("Počas interného testu sa nič nekupuje a skenovanie neodpočítava kredity. Môžete pracovať lokálne alebo sa prihlásiť cez Google na synchronizáciu údajov dokladov.")
-            Button(onClick = onNavigateBack) { Text("Pokračovať v testovaní") }
         }
     }
 }

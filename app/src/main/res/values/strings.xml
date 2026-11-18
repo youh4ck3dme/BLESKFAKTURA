@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">Blesková Faktúra</string>
-    <string name="support_email" translatable="false">erikbabcan@gmail.com</string>
+    <string name="support_email" translatable="false">support@vorkei.com</string>
     <!-- Set this HTTPS URL once docs/privacy-policy.html is hosted publicly before Play Store submission -->
     <string name="privacy_policy_url" translatable="false"></string>
 </resources>

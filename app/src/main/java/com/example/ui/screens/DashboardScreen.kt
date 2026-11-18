@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -56,8 +58,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -72,8 +75,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.Invoice
 import com.example.data.SlovakFinanceUtils
+import com.example.data.UserStats
 import com.example.ui.InvoiceViewModel
 import com.example.ui.PdfExportResult
 import com.example.ui.PdfExporter
@@ -89,10 +94,11 @@ fun DashboardScreen(
     onNavigateToSettings: () -> Unit,
     onSignOut: () -> Unit
 ) {
-    val currentUser by viewModel.currentUser.collectAsState()
-    val invoices by viewModel.invoices.collectAsState()
-    val userStats by viewModel.userStats.collectAsState()
-    val syncError by viewModel.syncError.collectAsState()
+    val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
+    val invoices by viewModel.invoices.collectAsStateWithLifecycle()
+    val userStats by viewModel.userStats.collectAsStateWithLifecycle()
+    val syncError by viewModel.syncError.collectAsStateWithLifecycle()
+    val dashboardSummary by viewModel.dashboardSummary.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -101,10 +107,11 @@ fun DashboardScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf("Všetko") }
     var selectedMonthIdx by rememberSaveable { mutableStateOf<Int?>(null) }
+    var showOnlyUnpaid by rememberSaveable { mutableStateOf(false) }
     var activeNavTab by rememberSaveable { mutableStateOf("HOME") }
     var selectedInvoiceForDetail by remember { mutableStateOf<Invoice?>(null) }
-    var isSavingInvoiceDetail by remember { mutableStateOf(false) }
     var isExportingPdf by remember { mutableStateOf(false) }
+    val ledgerHeaderScrollIndex = remember { mutableIntStateOf(7) }
 
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
     val monthFullNames = remember {
@@ -117,7 +124,7 @@ fun DashboardScreen(
         listOf("Všetko", "Kancelária", "Cestovné", "Služby", "Technika", "Strava", "Iné")
     }
 
-    val filteredInvoices = remember(invoices, searchQuery, selectedCategory, selectedMonthIdx, currentYear) {
+    val filteredInvoices = remember(invoices, searchQuery, selectedCategory, selectedMonthIdx, showOnlyUnpaid, currentYear) {
         invoices.filter { invoice ->
             val matchesSearch = invoice.supplierName.contains(searchQuery, ignoreCase = true) ||
                 (invoice.description?.contains(searchQuery, ignoreCase = true) ?: false)
@@ -128,7 +135,8 @@ fun DashboardScreen(
                 val ym = SlovakFinanceUtils.extractYearMonth(invoice.issueDate)
                 ym != null && ym.first == currentYear && ym.second == (selectedMonthIdx!! + 1)
             }
-            matchesSearch && matchesCategory && matchesMonth
+            val matchesUnpaid = !showOnlyUnpaid || !invoice.isPaid
+            matchesSearch && matchesCategory && matchesMonth && matchesUnpaid
         }
     }
 
@@ -162,7 +170,7 @@ fun DashboardScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.AccountBalanceWallet,
-                            contentDescription = if (viewModel.isInternalTesting) "O internej verzii" else "Predplatné",
+                            contentDescription = "Predplatné",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -211,7 +219,8 @@ fun DashboardScreen(
                         searchQuery = ""
                         selectedCategory = "Všetko"
                         selectedMonthIdx = null
-                        scope.launch { listState.animateScrollToItem(5) }
+                        showOnlyUnpaid = false
+                        scope.launch { listState.animateScrollToItem(ledgerHeaderScrollIndex.intValue) }
                     },
                     icon = { Icon(Icons.Default.Receipt, contentDescription = "Doklady") },
                     label = { Text("Doklady") }
@@ -219,8 +228,8 @@ fun DashboardScreen(
                 NavigationBarItem(
                     selected = false,
                     onClick = onNavigateToPricing,
-                    icon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = if (viewModel.isInternalTesting) "Interný test" else "Predplatné") },
-                    label = { Text(if (viewModel.isInternalTesting) "Interný test" else "Predplatné") }
+                    icon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Predplatné") },
+                    label = { Text("Predplatné") }
                 )
                 NavigationBarItem(
                     selected = false,
@@ -257,119 +266,122 @@ fun DashboardScreen(
             }
         }
     ) { innerPadding ->
-        LazyColumn(
-            state = listState,
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(bottom = 96.dp)
+                .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter
         ) {
-            item {
-                Spacer(modifier = Modifier.height(6.dp))
+            val isWideLayout = maxWidth >= 600.dp
+            val computedLedgerIndex = (if (isWideLayout) 5 else 6) + if (syncError != null) 1 else 0
+            SideEffect {
+                ledgerHeaderScrollIndex.intValue = computedLedgerIndex
             }
 
-            syncError?.let { errMsg ->
+            val onToggleUnpaidKpi: () -> Unit = {
+                val activating = !showOnlyUnpaid
+                showOnlyUnpaid = activating
+                if (activating) {
+                    activeNavTab = "DOCS"
+                    scope.launch { listState.animateScrollToItem(computedLedgerIndex) }
+                }
+            }
+
+            val onPendingPurchasesClick: () -> Unit = {
+                if (dashboardSummary.pendingPurchaseCount > 0) {
+                    viewModel.retryPendingBillingVerifications()
+                    Toast.makeText(
+                        context,
+                        "Opätovne overujem čakajúce nákupy Google Play...",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    onNavigateToPricing()
+                }
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 760.dp)
+                    .padding(horizontal = 16.dp)
+                    .testTag("dashboard_lazy_column"),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(bottom = 96.dp)
+            ) {
                 item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("sync_error_banner")
-                    ) {
-                        Row(
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
+                syncError?.let { errMsg ->
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                .testTag("sync_error_banner")
                         ) {
-                            Text(
-                                text = errMsg,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { viewModel.clearSyncError() }) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Zavrieť",
-                                    tint = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Bento Cell 1: Hero Section
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("hero_expenses_bento_card"),
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "VÝDAVKY S DPH",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 1.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Box(
+                            Row(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.primary)
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = if (viewModel.isInternalTesting) "Interný test" else if (userStats.isSubscribed) "Blesk Premium" else "${userStats.credits} kreditov",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onPrimary
+                                    text = errMsg,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                IconButton(onClick = { viewModel.clearSyncError() }) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Zavrieť",
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
                             }
                         }
+                    }
+                }
 
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Text(
-                            text = SlovakFinanceUtils.formatMoneyCents(userStats.effectiveTotalInvoicedCents()),
-                            style = MaterialTheme.typography.headlineLarge.copy(
-                                fontWeight = FontWeight.Black,
-                                fontSize = 36.sp,
-                                letterSpacing = (-1).sp
-                            ),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "Zaevidované doklady: ${userStats.invoiceCount} ks",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                // Bento Cell 1 + Top KPI Summary (stacked on compact, paired on medium/expanded)
+                if (isWideLayout) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            HeroExpensesBentoCard(
+                                userStats = userStats,
+                                modifier = Modifier.weight(1f)
+                            )
+                            DashboardKpiSummaryCard(
+                                summary = dashboardSummary,
+                                isUnpaidFilterActive = showOnlyUnpaid,
+                                onToggleUnpaidFilter = onToggleUnpaidKpi,
+                                onPendingPurchasesClick = onPendingPurchasesClick,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                } else {
+                    item {
+                        HeroExpensesBentoCard(userStats = userStats)
+                    }
+                    item {
+                        DashboardKpiSummaryCard(
+                            summary = dashboardSummary,
+                            isUnpaidFilterActive = showOnlyUnpaid,
+                            onToggleUnpaidFilter = onToggleUnpaidKpi,
+                            onPendingPurchasesClick = onPendingPurchasesClick
                         )
                     }
                 }
-            }
 
             // Bento Cell 2 & 3: Quick Actions
             item {
@@ -410,7 +422,7 @@ fun DashboardScreen(
 
                             Column {
                                 Text(
-                                    text = if (viewModel.isInternalTesting) "Prečítať doklad" else "Skenuj AI",
+                                    text = "Skenuj AI",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
@@ -448,7 +460,7 @@ fun DashboardScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.AccountBalanceWallet,
-                                    contentDescription = if (viewModel.isInternalTesting) "O internej verzii" else "Predplatné",
+                                    contentDescription = "Predplatné",
                                     tint = MaterialTheme.colorScheme.tertiaryContainer,
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -456,12 +468,12 @@ fun DashboardScreen(
 
                             Column {
                                 Text(
-                                    text = if (viewModel.isInternalTesting) "Interné testovanie" else "Predplatné",
+                                    text = "Predplatné",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
                                     color = MaterialTheme.colorScheme.onTertiaryContainer
                                 )
                                 Text(
-                                    text = if (viewModel.isInternalTesting) "Lokálne OCR bez nákupov" else "AI Kredity & Balíky",
+                                    text = "AI Kredity & Balíky",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f)
                                 )
@@ -471,10 +483,31 @@ fun DashboardScreen(
                 }
             }
 
+            // Recent 3 Invoices Summary Preview
+            item {
+                RecentInvoicesSummaryCard(
+                    recentInvoices = dashboardSummary.recentInvoices,
+                    recentTotalCents = dashboardSummary.recentTotalCents,
+                    onInvoiceClick = { selectedInvoiceForDetail = it },
+                    onSeeAllClick = {
+                        activeNavTab = "DOCS"
+                        searchQuery = ""
+                        selectedCategory = "Všetko"
+                        selectedMonthIdx = null
+                        showOnlyUnpaid = false
+                        scope.launch { listState.animateScrollToItem(computedLedgerIndex) }
+                    },
+                    onScanClick = {
+                        viewModel.shouldAutoLaunchCamera = true
+                        onNavigateToScan()
+                    }
+                )
+            }
+
             // Bento Cell 4: Scanner Quota Card (BF-33)
             item {
                 val creditCapacity = maxOf(10, userStats.credits)
-                val creditPercent = if (viewModel.isInternalTesting || userStats.isSubscribed) 100 else (userStats.credits * 100) / creditCapacity
+                val creditPercent = if (userStats.isSubscribed) 100 else (userStats.credits * 100) / creditCapacity
 
                 Card(
                     modifier = Modifier
@@ -495,7 +528,7 @@ fun DashboardScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (viewModel.isInternalTesting) "ČÍTANIE DOKLADOV" else "STAV AI SKENERA",
+                                text = "STAV AI SKENERA",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.ExtraBold,
                                     letterSpacing = 1.sp
@@ -509,7 +542,7 @@ fun DashboardScreen(
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = if (viewModel.isInternalTesting) "LOKÁLNE OCR" else "AI AKTÍVNE",
+                                    text = "AI AKTÍVNE",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 10.sp
@@ -527,9 +560,7 @@ fun DashboardScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (viewModel.isInternalTesting) {
-                                    "Interný test bez kreditov"
-                                } else if (userStats.isSubscribed) {
+                                text = if (userStats.isSubscribed) {
                                     "Blesk Premium (Neobmedzene)"
                                 } else {
                                     "Kredity: ${userStats.credits} skenov zostáva"
@@ -548,7 +579,7 @@ fun DashboardScreen(
 
                         LinearProgressIndicator(
                             progress = {
-                                if (viewModel.isInternalTesting || userStats.isSubscribed) 1.0f
+                                if (userStats.isSubscribed) 1.0f
                                 else (userStats.credits.toFloat() / creditCapacity.toFloat()).coerceIn(0f, 1f)
                             },
                             modifier = Modifier
@@ -570,7 +601,7 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Údaje a DPH pred uložením vždy skontrolujte",
+                                text = "Slovenské účtovníctvo a DPH (23%, 20%, 10%, 5%)",
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -703,6 +734,14 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 4.dp)
                 ) {
+                    item {
+                        FilterChipCustom(
+                            selected = showOnlyUnpaid,
+                            onClick = { showOnlyUnpaid = !showOnlyUnpaid },
+                            label = "Neuhradené (${dashboardSummary.unpaidCount})",
+                            testTagOverride = "filter_chip_unpaid"
+                        )
+                    }
                     items(slovakCategories) { category ->
                         FilterChipCustom(
                             selected = selectedCategory == category,
@@ -715,6 +754,7 @@ fun DashboardScreen(
 
             if (filteredInvoices.isEmpty()) {
                 item {
+                    val hasActiveFilters = searchQuery.isNotEmpty() || selectedCategory != "Všetko" || selectedMonthIdx != null || showOnlyUnpaid
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -733,7 +773,7 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = if (searchQuery.isNotEmpty() || selectedCategory != "Všetko" || selectedMonthIdx != null) {
+                                text = if (hasActiveFilters) {
                                     "Nenašli sa žiadne doklady"
                                 } else {
                                     "Žiadne zaevidované doklady"
@@ -744,8 +784,8 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = if (searchQuery.isNotEmpty() || selectedCategory != "Všetko" || selectedMonthIdx != null) {
-                                    "Skúste upraviť vyhľadávací výraz, kategóriu alebo zrušiť mesačný filter."
+                                text = if (hasActiveFilters) {
+                                    "Skúste upraviť vyhľadávací výraz, kategóriu alebo zrušiť aktívne filtre."
                                 } else {
                                     "Stlačte tlačidlo 'Bleskový Sken' a odfotografujte svoj prvý doklad."
                                 },
@@ -766,30 +806,88 @@ fun DashboardScreen(
                     )
                 }
             }
+            }
         }
     }
 
     selectedInvoiceForDetail?.let { invoice ->
         InvoiceDetailDialog(
             invoice = invoice,
-            onDismiss = { if (!isSavingInvoiceDetail) selectedInvoiceForDetail = null },
-            isSaving = isSavingInvoiceDetail,
+            onDismiss = { selectedInvoiceForDetail = null },
             onSave = { updated ->
-                if (!isSavingInvoiceDetail) {
-                    isSavingInvoiceDetail = true
-                    viewModel.saveInvoice(
-                        updated,
-                        onSaved = {
-                            isSavingInvoiceDetail = false
-                            selectedInvoiceForDetail = null
-                        },
-                        onError = { message ->
-                            isSavingInvoiceDetail = false
-                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                        }
+                viewModel.saveInvoice(updated)
+                selectedInvoiceForDetail = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun HeroExpensesBentoCard(
+    userStats: UserStats,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("hero_expenses_bento_card"),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "VÝDAVKY S DPH",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (userStats.isSubscribed) "Blesk Premium" else "${userStats.credits} kreditov",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
-        )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Text(
+                text = SlovakFinanceUtils.formatMoneyCents(userStats.effectiveTotalInvoicedCents()),
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontWeight = FontWeight.Black,
+                    fontSize = 36.sp,
+                    letterSpacing = (-1).sp
+                ),
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = "Zaevidované doklady: ${userStats.invoiceCount} ks",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+            )
+        }
     }
 }

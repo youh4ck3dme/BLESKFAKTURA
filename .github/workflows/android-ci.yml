@@ -1,132 +1,257 @@
-name: Android internal verification
+name: Android and backend verification
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
-  workflow_dispatch:
+    branches: [main, master]
 
 permissions:
   contents: read
 
 concurrency:
-  group: internal-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
-      GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-      UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
-      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      CI: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Validate documentation and build entrypoints
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 scripts/check-docs.py
+          bash -n gradlew release.sh scripts/build-local-debug.sh
+          test -x gradlew
+          test -x release.sh
+          test -x scripts/build-local-debug.sh
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@v3
+          java-version: "21"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
         with:
-          packages: platform-tools
-          cmdline-tools-version: '16111833'
-          log-accepted-android-sdk-licenses: false
-      - name: Install Android build SDK
-        run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Prepare Firebase config for compilation
-        run: node scripts/prepare-ci-config.mjs
-      - uses: pnpm/action-setup@v4
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
         with:
           version: 12.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Unit tests, lint and internal debug APK
-        run: bash scripts/test-internal.sh :app:testInternalDebugUnitTest :app:lintInternalDebug :app:lintInternalRelease :app:assembleInternalDebug :app:bundleInternalRelease -PunsignedRelease=true
-      - name: Build upload-signed internal AAB
-        if: ${{ env.GOOGLE_SERVICES_JSON != '' && env.UPLOAD_KEYSTORE_BASE64 != '' }}
+          run_install: false
+
+      - name: Prepare optional Firebase client configuration
+        id: firebase_client
         env:
-          KEYSTORE_PATH: ${{ runner.temp }}/upload.jks
+          # PR code never receives the live client configuration, including same-repository PRs.
+          GOOGLE_SERVICES_JSON: ${{ github.event_name == 'push' && secrets.GOOGLE_SERVICES_JSON || '' }}
         run: |
-          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          ./gradlew :app:bundleInternalRelease --no-daemon --console=plain
-      - name: Upload verification reports
-        if: always()
-        uses: actions/upload-artifact@v4
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = os.environ.get("GOOGLE_SERVICES_JSON", "")
+          configured = bool(value.strip())
+          if configured:
+              config = json.loads(value)
+              if config.get("project_info", {}).get("project_id") != "gen-lang-client-0115180408":
+                  raise SystemExit("Firebase client configuration belongs to a different project.")
+              clients = [client.get("client_info", {}) for client in config.get("client", [])]
+              if not any(
+                  client.get("mobilesdk_app_id") == "1:356987646276:android:45325d3dea6c248380e711"
+                  and client.get("android_client_info", {}).get("package_name") == "sk.bizagent.bleskovafaktura"
+                  for client in clients
+              ):
+                  raise SystemExit("Firebase client configuration does not match the Android app.")
+              path = Path("app/google-services.json")
+              with open(path, "x", opener=lambda name, flags: os.open(name, flags, 0o600)) as output:
+                  output.write(value)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"configured={str(configured).lower()}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(
+                  "Firebase client configuration is present. Live App Check, sign-in and scanning remain device tests.\n"
+                  if configured else
+                  "**Live Firebase is not configured in this CI APK. Use it for local demo testing only.** "
+                  "Repository tests use an isolated demo Firebase project and local emulators.\n"
+              )
+          PY
+
+      - name: Install locked backend dependencies and run tests
+        run: |
+          pnpm --dir functions install --frozen-lockfile --ignore-scripts
+          pnpm --dir functions test
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
         with:
-          name: android-verification
+          packages: platform-tools platforms;android-36.1 build-tools;36.0.0
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build debug APK and run all tests and lint with local Firebase emulators
+        env:
+          # Gradle and its test fork have their own explicit heap sizes; this caps the Firestore JVM.
+          JAVA_TOOL_OPTIONS: -Xmx512m -XX:ActiveProcessorCount=2
+        run: |
+          pnpm dlx firebase-tools@15.36.0 emulators:exec \
+            --only firestore,auth --project demo-no-project --config firebase.json --non-interactive \
+            './gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --continue --no-daemon --max-workers=1 --no-parallel --console=plain'
+
+      - name: Compile and lint release sources without signing
+        run: |
+          ./gradlew :app:compileReleaseKotlin :app:lintRelease \
+            --no-daemon --max-workers=1 --no-parallel --console=plain
+
+      - name: Check signed release availability
+        id: release_gate
+        if: github.event_name == 'push'
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          FIREBASE_CONFIGURED: ${{ steps.firebase_client.outputs.configured }}
+        run: |
+          if [[ -n "$UPLOAD_KEYSTORE_BASE64" && -n "$STORE_PASSWORD" && -n "$KEY_PASSWORD" && "$FIREBASE_CONFIGURED" == 'true' ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Signed release skipped: existing upload credentials and Firebase client configuration are required.'
+            echo 'Signed release skipped: configure GOOGLE_SERVICES_JSON and the three existing upload-signing secrets.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify existing upload identity and build signed release
+        id: release_build
+        if: steps.release_gate.outputs.enabled == 'true'
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PATH: ${{ runner.temp }}/blesk-upload.jks
+        run: |
+          umask 077
+          trap 'rm -f "$KEYSTORE_PATH"' EXIT
+          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          fingerprint="$(keytool -exportcert -rfc -alias upload -keystore "$KEYSTORE_PATH" \
+            -storepass:env STORE_PASSWORD | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':\r\n')"
+          [[ "$fingerprint" == 'B016994403F88828911CBDC2CACF5B1834D547ECAB9CCC28BA24C43963463348' ]] || {
+            echo '::error::Keystore does not match the existing Google Play upload certificate.'
+            exit 1
+          }
+          ./gradlew :app:lintRelease :app:bundleRelease :app:assembleRelease \
+            --no-daemon --max-workers=1 --no-parallel --console=plain
+          bundle=app/build/outputs/bundle/release/app-release.aab
+          apk=app/build/outputs/apk/release/app-release.apk
+          jarsigner -verify -strict -keystore "$KEYSTORE_PATH" -storepass:env STORE_PASSWORD "$bundle"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$apk"
+          sha256sum "$bundle" "$apk" > app/build/outputs/release-SHA256SUMS.txt
+
+      - name: Remove temporary signing material
+        if: always()
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/blesk-upload.jks
+        run: rm -f "$KEYSTORE_PATH" app/google-services.json
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bleskova-faktura-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bleskova-faktura-test-reports
           path: |
-            app/build/reports/
+            app/build/reports/tests/
             app/build/test-results/
           if-no-files-found: warn
-      - name: Upload signed internal bundle and mapping
-        if: ${{ success() && env.GOOGLE_SERVICES_JSON != '' && env.UPLOAD_KEYSTORE_BASE64 != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: internal-play-upload
-          path: |
-            app/build/outputs/bundle/internalRelease/*.aab
-            app/build/outputs/mapping/internalRelease/mapping.txt
-          if-no-files-found: error
+          retention-days: 14
 
-  device:
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bleskova-faktura-lint-reports
+          path: app/build/reports/lint-results-*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload verified signed release
+        if: always() && steps.release_build.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: bleskova-faktura-release-signed
+          path: |
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/release-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  native-ocr:
+    name: Bundled OCR on offline Android
     runs-on: ubuntu-latest
-    needs: verify
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@v3
+          java-version: "21"
+      - uses: android-actions/setup-android@v4
         with:
-          packages: platform-tools
-          cmdline-tools-version: '16111833'
+          packages: platform-tools platforms;android-36.1 build-tools;36.0.0 emulator system-images;android-30;google_apis;x86_64
           log-accepted-android-sdk-licenses: false
-      - run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
-      - uses: gradle/actions/setup-gradle@v4
-      - run: node scripts/prepare-ci-config.mjs
-      - name: Enable emulator acceleration
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build app and instrumentation APKs before starting emulator
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=1 --no-parallel --console=plain
+      - name: Run real bundled OCR with device networking disabled
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Real on-device OCR and local workflow
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 36
-          target: google_apis
-          arch: x86_64
-          disable-animations: true
-          script: ./gradlew :app:connectedInternalDebugAndroidTest --no-daemon --console=plain
-      - name: Upload device reports
+          sudo chmod a+rw /dev/kvm
+          echo no | avdmanager create avd --name blesk_ocr_test --package 'system-images;android-30;google_apis;x86_64' --device pixel_2
+          "$ANDROID_HOME/emulator/emulator" -avd blesk_ocr_test -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/ocr-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'adb -e emu kill >/dev/null 2>&1 || true; kill "$emulator_pid" 2>/dev/null || true' EXIT
+          booted=false
+          for attempt in $(seq 1 120); do
+            if [[ "$(adb -e shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == '1' ]]; then booted=true; break; fi
+            kill -0 "$emulator_pid" || exit 1
+            sleep 3
+          done
+          [[ "$booted" == true ]]
+          adb -e shell svc wifi disable
+          adb -e shell svc data disable
+          ./gradlew :app:connectedDebugAndroidTest \
+            -Pandroid.testInstrumentationRunnerArguments.class=com.example.data.LocalReceiptNativeOcrTest \
+            --offline --no-daemon --max-workers=1 --no-parallel --console=plain \
+            '-Dorg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=512m -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8'
+      - name: Upload native OCR reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: android-device-reports
+          name: bleskova-faktura-native-ocr-reports
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
           if-no-files-found: warn
-
-  backend:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 12.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: pnpm
-          cache-dependency-path: functions/pnpm-lock.yaml
-      - run: pnpm --dir functions install --frozen-lockfile
-      - run: pnpm --dir functions test
+          retention-days: 14

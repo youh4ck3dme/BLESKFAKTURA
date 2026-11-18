@@ -1,6 +1,10 @@
 package com.example.data
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import com.example.base.FirestoreEmulatorTestBase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.async
@@ -11,12 +15,72 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
+import org.robolectric.annotation.Config
 import java.util.UUID
 
 class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
+
+    @Test
+    fun staleReservationCannotCommitOrRefundANewerScan() = runBlocking {
+        val uid = signInTestUser("stale_${UUID.randomUUID()}@test.sk")
+        val repo = InvoiceRepository(context, firestore, auth)
+        try {
+            withTimeout(DEFAULT_TIMEOUT_MS) { repo.initializeUserStats(uid) }
+            val first = withTimeout(DEFAULT_TIMEOUT_MS) { repo.reserveScanCredit(uid) } as CreditReservationResult.Reserved
+            withTimeout(DEFAULT_TIMEOUT_MS) { repo.commitScanReservation(uid, first.reservationId) }
+            val second = withTimeout(DEFAULT_TIMEOUT_MS) { repo.reserveScanCredit(uid) } as CreditReservationResult.Reserved
+            withTimeout(DEFAULT_TIMEOUT_MS) {
+                repo.commitScanReservation(uid, first.reservationId)
+                repo.rollbackScanReservation(uid, first.reservationId)
+            }
+            val active = withTimeout(DEFAULT_TIMEOUT_MS) { firestore.collection("users").document(uid).get().await() }
+            assertEquals(8L, active.getLong("credits"))
+            assertEquals(second.reservationId, active.getString("activeReservationId"))
+            withTimeout(DEFAULT_TIMEOUT_MS) { repo.rollbackScanReservation(uid, second.reservationId) }
+            val settled = withTimeout(DEFAULT_TIMEOUT_MS) { firestore.collection("users").document(uid).get().await() }
+            assertEquals(9L, settled.getLong("credits"))
+            assertNull(settled.getString("activeReservationId"))
+        } finally { repo.stopCloudSync() }
+    }
+
+    @Test
+    fun anotherUserCannotOverwriteOrDeleteAnOwnersInvoice() = runBlocking {
+        val email = "owner_write_${UUID.randomUUID()}@test.sk"
+        val uid = signInTestUser(email)
+        val repo = InvoiceRepository(context, firestore, auth)
+        val invoice = Invoice(id = UUID.randomUUID().toString(), supplierName = "Synthetic private merchant",
+            issueDate = "2026-11-18", totalAmountCents = 1000L, userId = uid)
+        try {
+            withTimeout(DEFAULT_TIMEOUT_MS) {
+                repo.initializeUserStats(uid)
+                assertTrue(repo.insertInvoice(invoice).isSuccess)
+            }
+            repo.stopCloudSync()
+            signInTestUser("other_write_${UUID.randomUUID()}@test.sk")
+            val target = firestore.collection("users").document(uid).collection("invoices").document(invoice.id)
+            for (delete in listOf(false, true)) {
+                try {
+                    withTimeout(DEFAULT_TIMEOUT_MS) {
+                        if (delete) target.delete().await() else target.update("supplierName", "forged").await()
+                    }
+                    fail("A different account must not mutate the owner's invoice")
+                } catch (e: Exception) {
+                    assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, e.unwrapFirestoreException()?.code)
+                }
+            }
+            assertEquals(uid, signInTestUser(email))
+            val unchanged = withTimeout(DEFAULT_TIMEOUT_MS) { target.get().await() }
+            assertEquals(invoice.supplierName, unchanged.getString("supplierName"))
+        } finally { repo.stopCloudSync() }
+    }
 
     @Test
     fun initializeUserStats_newUser_createsFirestoreDocWith10Credits() = runBlocking {
@@ -82,40 +146,6 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
             }
             assertTrue(list.any { it.id == invoiceId })
         } finally {
-            repo.stopCloudSync()
-        }
-    }
-
-    @Test
-    fun failedCloudWrite_doesNotCreateALocalOnlyRow_andCanBeRetriedWithSameId() = runBlocking {
-        val uid = signInTestUser("offline_${UUID.randomUUID()}@test.sk")
-        val repo = InvoiceRepository(context, firestore, auth)
-        try {
-            withTimeout(DEFAULT_TIMEOUT_MS) { repo.initializeUserStats(uid) }
-            repo.stopCloudSync()
-            val invoice = Invoice(
-                id = UUID.randomUUID().toString(),
-                supplierName = "Offline test",
-                issueDate = "2026-11-16",
-                totalAmount = 12.30,
-                totalAmountCents = 1230L,
-                category = "Iné",
-                userId = uid
-            )
-            firestore.disableNetwork().await()
-            val failed = withTimeout(20_000L) { repo.insertInvoice(invoice) }
-            assertTrue("Cloud write unexpectedly succeeded offline", failed.isFailure)
-            assertTrue(repo.getInvoices().first().none { it.id == invoice.id })
-            firestore.enableNetwork().await()
-            val retried = withTimeout(DEFAULT_TIMEOUT_MS) { repo.insertInvoice(invoice) }
-            assertTrue("Retry failed: ${retried.exceptionOrNull()}", retried.isSuccess)
-            assertEquals(1, repo.getInvoices().first().count { it.id == invoice.id })
-            assertTrue(firestore.collection("users").document(uid).collection("invoices").document(invoice.id).get().await().exists())
-            val foreignOwner = invoice.copy(id = UUID.randomUUID().toString(), userId = "different-owner")
-            assertTrue(repo.insertInvoice(foreignOwner).isFailure)
-            assertTrue(repo.getInvoices().first().none { it.id == foreignOwner.id })
-        } finally {
-            firestore.enableNetwork().await()
             repo.stopCloudSync()
         }
     }
@@ -341,7 +371,8 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     @Test
     fun deleteAccount_removesCloudAndLocalUserInvoicesAndProfile() = runBlocking {
-        val uid = signInTestUser("del_${UUID.randomUUID()}@test.sk")
+        val email = "del_${UUID.randomUUID()}@test.sk"
+        val uid = signInTestUser(email)
         val repo = InvoiceRepository(context, firestore, auth)
         try {
             withTimeout(DEFAULT_TIMEOUT_MS) { repo.initializeUserStats(uid) }
@@ -364,8 +395,8 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
             assertTrue("deleteAccount failed: ${delRes.exceptionOrNull()}", delRes.isSuccess)
             assertEquals(null, repo.currentUser.value)
 
-            // Re-sign in same email / new account or check via fresh sign-in is empty
-            val newUid = signInTestUser("check_after_del_${UUID.randomUUID()}@test.sk")
+            // Reusing the same email must create a new Auth identity, not recover the deleted account.
+            val newUid = signInTestUser(email)
             assertFalse(newUid == uid)
         } finally {
             repo.stopCloudSync()
@@ -375,5 +406,68 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
     private companion object {
         const val DEFAULT_TIMEOUT_MS = 8000L
         const val FLOW_TIMEOUT_MS = 4000L
+    }
+}
+
+@Config(manifest = Config.NONE, sdk = [34])
+class FirestoreEmulatorIsolationTest : FirestoreEmulatorTestBase() {
+    private lateinit var originalDefaultApp: FirebaseApp
+    private var createdDefaultApp = false
+
+    @Before
+    override fun setUpFirebase() {
+        val appContext = ApplicationProvider.getApplicationContext<Context>()
+        val existingDefault = FirebaseApp.getApps(appContext)
+            .firstOrNull { it.name == FirebaseApp.DEFAULT_APP_NAME }
+        createdDefaultApp = existingDefault == null
+        originalDefaultApp = existingDefault ?: FirebaseApp.initializeApp(
+            appContext,
+            FirebaseOptions.Builder()
+                .setApplicationId("1:1234567890:android:defaultsentinel")
+                .setProjectId("demo-default-sentinel")
+                .setApiKey("fake-default-api-key")
+                .build()
+        )
+        super.setUpFirebase()
+    }
+
+    @Test
+    fun existingDefaultApp_cannotSelectTheProjectOrFirestoreEndpointForTests() {
+        assertNotSame(originalDefaultApp, auth.app)
+        assertSame(auth.app, firestore.app)
+        assertEquals("demo-no-project", auth.app.options.projectId)
+        assertEquals("127.0.0.1:8085", firestore.firestoreSettings.host)
+        assertFalse(firestore.firestoreSettings.isSslEnabled)
+        super.tearDownFirebase()
+        assertSame(originalDefaultApp, FirebaseApp.getInstance())
+    }
+
+    @Test
+    fun repeatedSetupAndTeardown_reusesTheIsolatedClientsWithoutDeletingTheirApp() {
+        val testApp = auth.app
+        val firstAuth = auth
+        val firstFirestore = firestore
+        repeat(3) {
+            super.tearDownFirebase()
+            assertNull(auth.currentUser)
+            assertSame(originalDefaultApp, FirebaseApp.getInstance())
+            super.setUpFirebase()
+            assertSame(testApp, auth.app)
+            assertSame(firstAuth, auth)
+            assertSame(firstFirestore, firestore)
+            assertEquals("demo-no-project", auth.app.options.projectId)
+            assertEquals("127.0.0.1:8085", firestore.firestoreSettings.host)
+            assertFalse(firestore.firestoreSettings.isSslEnabled)
+            assertNotSame(originalDefaultApp, auth.app)
+        }
+    }
+
+    @After
+    override fun tearDownFirebase() {
+        try {
+            super.tearDownFirebase()
+        } finally {
+            if (createdDefaultApp && ::originalDefaultApp.isInitialized) originalDefaultApp.delete()
+        }
     }
 }

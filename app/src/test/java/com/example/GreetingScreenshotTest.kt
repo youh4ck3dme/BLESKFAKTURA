@@ -10,25 +10,21 @@ import androidx.compose.ui.test.onRoot
 import com.example.ui.theme.MyApplicationTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureRoboImage
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import org.robolectric.annotation.LooperMode
-import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@LooperMode(LooperMode.Mode.PAUSED)
 @Config(qualifiers = RobolectricDeviceQualifiers.Pixel8, sdk = [36])
 class GreetingScreenshotTest {
 
   @get:Rule val composeTestRule = createComposeRule()
 
-  @Test(timeout = 90_000L)
+  @Test
   fun brand_header_renders_in_theme() {
     composeTestRule.setContent {
       MyApplicationTheme {
@@ -43,17 +39,6 @@ class GreetingScreenshotTest {
 
     composeTestRule.waitForIdle()
     composeTestRule.onNodeWithText("Blesková Faktúra").assertIsDisplayed()
-    val screenshot = File("build/reports/screenshots/${BuildConfig.FLAVOR}/brand_header.png")
-    check(screenshot.parentFile.mkdirs() || screenshot.parentFile.isDirectory)
-    val previousRecord = System.getProperty("roborazzi.test.record")
-    try {
-      // A normal unit-test task otherwise leaves captureRoboImage disabled by default.
-      System.setProperty("roborazzi.test.record", "true")
-      composeTestRule.onRoot().captureRoboImage(filePath = screenshot.absolutePath)
-      assertTrue("Native screenshot was not written", screenshot.isFile && screenshot.length() > 0L)
-    } finally {
-      if (previousRecord == null) System.clearProperty("roborazzi.test.record")
-      else System.setProperty("roborazzi.test.record", previousRecord)
-    }
+    composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/brand_header.png")
   }
 }

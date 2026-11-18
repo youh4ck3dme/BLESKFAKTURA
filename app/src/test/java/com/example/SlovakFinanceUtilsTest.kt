@@ -3,12 +3,26 @@ package com.example
 import com.example.data.SlovakFinanceUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Assert.assertFalse
 import org.junit.Test
 import java.math.BigDecimal
 
 class SlovakFinanceUtilsTest {
+
+    @Test
+    fun normalizeIsoDate_rejectsTrailingTextImpossibleLeapDayAndOutOfRangeYears() {
+        listOf("2026-11-18 extra", "18.11.2026x", "2026/11/18/19", "29.02.2025", "1989-12-31", "2101-01-01")
+            .forEach { assertNull("Must reject the entire invalid input: $it", SlovakFinanceUtils.normalizeIsoDate(it)) }
+        assertEquals("2024-02-29", SlovakFinanceUtils.normalizeIsoDate(" 29.02.2024 "))
+    }
+
+    @Test
+    fun centConversion_roundsHalfCentsAndPreservesNegativeAdjustments() {
+        assertEquals(101L, SlovakFinanceUtils.bigDecimalToCents(BigDecimal("1.005")))
+        assertEquals(-101L, SlovakFinanceUtils.bigDecimalToCents(BigDecimal("-1.005")))
+        assertEquals("-1,01", SlovakFinanceUtils.formatCentsForInput(-101L))
+        assertEquals(0L, SlovakFinanceUtils.doubleToCents(Double.NaN))
+        assertEquals(0L, SlovakFinanceUtils.doubleToCents(Double.POSITIVE_INFINITY))
+    }
 
     @Test
     fun parseSlovakDecimal_handlesCommaDotThousandsAndCurrency() {
@@ -37,21 +51,6 @@ class SlovakFinanceUtilsTest {
         assertEquals(2026 to 11, SlovakFinanceUtils.extractYearMonth("16.11.2026"))
         assertNull(SlovakFinanceUtils.normalizeIsoDate("31.02.2026"))
         assertNull(SlovakFinanceUtils.normalizeIsoDate("1800-01-01"))
-        assertNull(SlovakFinanceUtils.normalizeIsoDate("16.11.2026-extra"))
-        assertNull(SlovakFinanceUtils.normalizeIsoDate("2026-11-16 12:00"))
-    }
-
-    @Test
-    fun optionalVatRate_preservesUnknownValueAndValidatesOnlyEnteredRates() {
-        assertEquals("", SlovakFinanceUtils.formatOptionalVatRateForInput(null))
-        assertEquals("0", SlovakFinanceUtils.formatOptionalVatRateForInput(0.0))
-        assertEquals("23", SlovakFinanceUtils.formatOptionalVatRateForInput(23.0))
-        assertTrue(SlovakFinanceUtils.isValidOptionalVatRate(""))
-        assertTrue(SlovakFinanceUtils.isValidOptionalVatRate("0"))
-        assertTrue(SlovakFinanceUtils.isValidOptionalVatRate("23"))
-        assertFalse(SlovakFinanceUtils.isValidOptionalVatRate("-1"))
-        assertFalse(SlovakFinanceUtils.isValidOptionalVatRate("101"))
-        assertFalse(SlovakFinanceUtils.isValidOptionalVatRate("neznáme"))
     }
 
     @Test

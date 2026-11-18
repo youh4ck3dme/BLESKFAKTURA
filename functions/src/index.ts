@@ -17,7 +17,6 @@ import {
 
 initializeApp();
 const db = getFirestore(FIRESTORE_DATABASE_ID);
-const BILLING_SERVICE_ACCOUNT = "blesk-billing@gen-lang-client-0115180408.iam.gserviceaccount.com";
 
 async function getAndroidPublisherClient() {
   const auth = new publisherAuth.GoogleAuth({
@@ -91,10 +90,6 @@ const firestoreBillingStore: BillingStore = {
           const snap = await tx.get(db.collection("billingTokens").doc(tokenHash));
           return snap.exists ? (snap.data() as TokenRecord) : null;
         },
-        async userExists(uid) {
-          const snap = await tx.get(db.collection("users").doc(uid));
-          return snap.exists;
-        },
         setToken(tokenHash, record) {
           pendingTokenWrites.push({ refPath: `billingTokens/${tokenHash}`, record });
         },
@@ -102,7 +97,18 @@ const firestoreBillingStore: BillingStore = {
           const userRef = db.collection("users").doc(uid);
           const userSnap = await tx.get(userRef);
           if (!userSnap.exists) {
-            throw new VerificationError("failed-precondition", "App profile does not exist.");
+            const initialCredits = Math.max(0, 10 + creditsDelta);
+            tx.set(userRef, {
+              userId: uid,
+              credits: initialCredits,
+              isSubscribed: false,
+              totalInvoiced: 0,
+              totalInvoicedCents: 0,
+              invoiceCount: 0,
+              activeReservationId: null,
+              createdAt: FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
           } else {
             const currentCredits = Number(userSnap.get("credits") ?? 0);
             const nextCredits = Math.max(0, currentCredits + creditsDelta);
@@ -116,7 +122,18 @@ const firestoreBillingStore: BillingStore = {
           const userRef = db.collection("users").doc(uid);
           const userSnap = await tx.get(userRef);
           if (!userSnap.exists) {
-            throw new VerificationError("failed-precondition", "App profile does not exist.");
+            tx.set(userRef, {
+              userId: uid,
+              credits: 10,
+              isSubscribed,
+              subscriptionExpiryMillis: expiryMillis,
+              totalInvoiced: 0,
+              totalInvoicedCents: 0,
+              invoiceCount: 0,
+              activeReservationId: null,
+              createdAt: FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
           } else {
             tx.update(userRef, {
               isSubscribed,
@@ -141,7 +158,6 @@ const firestoreBillingStore: BillingStore = {
 export const verifyPlayPurchase = onCall(
   {
     region: "europe-west1",
-    serviceAccount: BILLING_SERVICE_ACCOUNT,
     enforceAppCheck: true,
     consumeAppCheckToken: false,
     minInstances: 0,
@@ -183,7 +199,6 @@ export const handlePlayRtdn = onMessagePublished(
   {
     topic: "play-billing-rtdn",
     region: "europe-west1",
-    serviceAccount: BILLING_SERVICE_ACCOUNT,
     minInstances: 0,
     maxInstances: 1,
     memory: "256MiB",

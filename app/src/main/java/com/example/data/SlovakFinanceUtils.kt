@@ -4,8 +4,8 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
-import java.text.SimpleDateFormat
 import java.text.ParsePosition
+import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -49,17 +49,6 @@ object SlovakFinanceUtils {
         } catch (_: NumberFormatException) {
             null
         }
-    }
-
-    fun formatOptionalVatRateForInput(rate: Double?): String =
-        rate?.takeIf(Double::isFinite)?.let {
-            BigDecimal.valueOf(it).stripTrailingZeros().toPlainString().replace('.', ',')
-        }.orEmpty()
-
-    fun isValidOptionalVatRate(raw: String): Boolean {
-        if (raw.isBlank()) return true
-        val value = parseSlovakDecimal(raw) ?: return false
-        return value >= BigDecimal.ZERO && value <= BigDecimal(100)
     }
 
     fun bigDecimalToCents(amount: BigDecimal): Long =

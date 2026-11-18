@@ -53,7 +53,6 @@ object PdfExporter {
         val totalDocCount: Int,
         val totalInvoicedCents: Long,
         val totalVatCents: Long,
-        val invoiceCountWithoutVat: Int,
         val formattedTotalInvoiced: String,
         val formattedTotalVat: String
     )
@@ -73,15 +72,13 @@ object PdfExporter {
     ): Pair<PdfReportSummary, List<PdfInvoiceRow>> {
         val totalInvoicedCents = invoices.sumOf { it.effectiveTotalCents() }
         val totalVatCents = invoices.sumOf { it.effectiveVatCents() ?: 0L }
-        val missingVatCount = invoices.count { it.effectiveVatCents() == null }
         val summary = PdfReportSummary(
             periodLabel = periodLabel,
             totalDocCount = invoices.size,
             totalInvoicedCents = totalInvoicedCents,
             totalVatCents = totalVatCents,
-            invoiceCountWithoutVat = missingVatCount,
             formattedTotalInvoiced = SlovakFinanceUtils.formatMoneyCents(totalInvoicedCents),
-            formattedTotalVat = if (missingVatCount == invoices.size) "-" else SlovakFinanceUtils.formatMoneyCents(totalVatCents)
+            formattedTotalVat = SlovakFinanceUtils.formatMoneyCents(totalVatCents)
         )
         val rows = invoices.map { invoice ->
             val dateText = SlovakFinanceUtils.normalizeIsoDate(invoice.issueDate) ?: invoice.issueDate
@@ -98,7 +95,7 @@ object PdfExporter {
             }
             val icoDicText = if (rawIcoDic.length > 18) rawIcoDic.substring(0, 16) + "..." else rawIcoDic
             val vatCents = invoice.effectiveVatCents()
-            val vatText = if (vatCents != null) {
+            val vatText = if (vatCents != null && vatCents > 0L) {
                 SlovakFinanceUtils.formatMoneyCents(vatCents, invoice.currency)
             } else {
                 "-"
@@ -235,7 +232,7 @@ object PdfExporter {
                 canvasToWrite.drawText("IČO / DIČ", 240f, yPos, boldPaint)
                 canvasToWrite.drawText("Kategória", 345f, yPos, boldPaint)
                 canvasToWrite.drawText("DPH", 455f, yPos, boldPaint)
-                canvasToWrite.drawText("Celková suma", 555f, yPos, rightAlignBoldPaint)
+                canvasToWrite.drawText("Suma s DPH", 555f, yPos, rightAlignBoldPaint)
 
                 linePaint.color = Color.rgb(103, 80, 164)
                 linePaint.strokeWidth = 1.2f
@@ -244,11 +241,11 @@ object PdfExporter {
 
             drawPageHeader(pageNumber, canvas)
 
-            canvas.drawRoundRect(40f, 110f, 555f, 182f, 12f, 12f, boxPaint)
+            canvas.drawRoundRect(40f, 110f, 555f, 165f, 12f, 12f, boxPaint)
             linePaint.color = Color.rgb(202, 196, 208)
             linePaint.strokeWidth = 1f
             linePaint.style = Paint.Style.STROKE
-            canvas.drawRoundRect(40f, 110f, 555f, 182f, 12f, 12f, linePaint)
+            canvas.drawRoundRect(40f, 110f, 555f, 165f, 12f, 12f, linePaint)
             linePaint.style = Paint.Style.FILL
 
             boldPaint.textSize = 9.5f
@@ -259,23 +256,21 @@ object PdfExporter {
             canvas.drawText("Obdobie: ${summary.periodLabel}", 55f, 155f, textPaint)
 
             canvas.drawText(
-                "Suma dokladov: ${summary.formattedTotalInvoiced}",
+                "Suma celkom (s DPH): ${summary.formattedTotalInvoiced}",
                 295f,
                 143f,
                 boldPaint
             )
             canvas.drawText(
-                "Zadaná DPH spolu: ${summary.formattedTotalVat}",
+                "DPH celkom: ${summary.formattedTotalVat}",
                 295f,
                 155f,
                 textPaint
             )
 
-            canvas.drawText("Doklady bez zadanej DPH: ${summary.invoiceCountWithoutVat}", 55f, 171f, textPaint)
-
-            var y = 212f
+            var y = 195f
             drawTableHeader(y, canvas)
-            y = 237f
+            y = 220f
 
             rows.forEachIndexed { index, row ->
                 if (y > 780f) {
@@ -327,7 +322,7 @@ object PdfExporter {
 
             canvas.drawText("SPOLU CELKOM (€):", 335f, y, boldPaint)
             canvas.drawText(
-                summary.formattedTotalVat,
+                if (summary.totalVatCents > 0L) summary.formattedTotalVat else "-",
                 455f,
                 y,
                 boldPaint

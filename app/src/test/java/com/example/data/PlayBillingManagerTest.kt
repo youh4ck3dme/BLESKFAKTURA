@@ -22,6 +22,45 @@ import org.robolectric.annotation.Config
 class PlayBillingManagerTest {
 
     @Test
+    fun failedVerification_canRetrySameTokenAndClearsPendingOnlyAfterSuccess() = runTest {
+        var calls = 0
+        val manager = PlayBillingManager(
+            context = context,
+            verifier = BillingPurchaseVerifier { _, productId, _ ->
+                calls++
+                if (calls == 1) Result.failure(IllegalStateException("synthetic service outage"))
+                else Result.success(BillingVerificationResponse("GRANTED", false, productId, 10, false))
+            },
+            billingScope = TestScope(testScheduler),
+            packageNameProvider = { "sk.bizagent.bleskovafaktura" }, enableBillingClient = false
+        )
+        manager.handleSinglePurchase("blesk_credits_10", "synthetic-retry-purchase", Purchase.PurchaseState.PURCHASED)
+        assertTrue(manager.billingState.value is PlayBillingUiState.Error)
+        assertEquals(1, manager.pendingUnverifiedCount.value)
+        manager.handleSinglePurchase("blesk_credits_10", "synthetic-retry-purchase", Purchase.PurchaseState.PURCHASED)
+        assertEquals(2, calls)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
+        assertEquals(10, (manager.billingState.value as PlayBillingUiState.Verified).creditsGranted)
+    }
+
+    @Test
+    fun blankPurchaseIdentity_neverCallsVerifierOrCreatesPendingEntitlement() = runTest {
+        var calls = 0
+        val manager = PlayBillingManager(
+            context = context,
+            verifier = BillingPurchaseVerifier { _, _, _ -> calls++; error("must not verify") },
+            billingScope = TestScope(testScheduler),
+            packageNameProvider = { "sk.bizagent.bleskovafaktura" }, enableBillingClient = false
+        )
+        manager.handleSinglePurchase("", "synthetic-purchase", Purchase.PurchaseState.PURCHASED)
+        assertTrue(manager.billingState.value is PlayBillingUiState.Error)
+        manager.handleSinglePurchase("blesk_credits_10", " ", Purchase.PurchaseState.PURCHASED)
+        assertTrue(manager.billingState.value is PlayBillingUiState.Error)
+        assertEquals(0, calls)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
+    }
+
+    @Test
     fun accountId_matchesBackendOwnershipContract() {
         assertEquals(
             "61ef41ccb77b7d1a9af28d85bb2a687159ed17ea8050e139b514a2ac127ad01f",
@@ -124,6 +163,7 @@ class PlayBillingManagerTest {
 
         assertEquals(0, calls)
         assertTrue(manager.billingState.value is PlayBillingUiState.Info)
+        assertEquals(1, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -148,6 +188,7 @@ class PlayBillingManagerTest {
 
         assertEquals(0, calls)
         assertEquals(PlayBillingUiState.Idle, manager.billingState.value)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -173,6 +214,7 @@ class PlayBillingManagerTest {
         val state = manager.billingState.value
         assertTrue(state is PlayBillingUiState.Error)
         assertTrue((state as PlayBillingUiState.Error).message.contains("inému účtu"))
+        assertEquals(1, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -212,12 +254,14 @@ class PlayBillingManagerTest {
         val idemState = manager.billingState.value as PlayBillingUiState.Verified
         assertTrue(idemState.idempotent)
         assertEquals(0, idemState.creditsGranted)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
 
         mode = "SUBSCRIPTION_ACTIVE"
         manager.handleSinglePurchase("blesk_premium_monthly", "tok_sub_active_123456", Purchase.PurchaseState.PURCHASED)
         val subState = manager.billingState.value as PlayBillingUiState.Verified
         assertTrue(subState.isSubscribed)
         assertEquals("blesk_premium_monthly", subState.productId)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
     }
 
     @Test
@@ -253,10 +297,12 @@ class PlayBillingManagerTest {
         testScheduler.advanceUntilIdle()
         assertEquals(1, invocationCount)
         assertTrue(manager.billingState.value is PlayBillingUiState.PendingVerification)
+        assertEquals(1, manager.pendingUnverifiedCount.value)
 
         gate.complete(Unit)
         listOf(job1, job2).awaitAll()
         assertEquals(1, invocationCount)
         assertTrue(manager.billingState.value is PlayBillingUiState.Verified)
+        assertEquals(0, manager.pendingUnverifiedCount.value)
     }
 }
