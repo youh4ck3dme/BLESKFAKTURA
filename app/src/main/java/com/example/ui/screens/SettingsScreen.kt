@@ -351,8 +351,8 @@ fun SettingsScreen(
                         "Blesková Faktúra (sk.bizagent.bleskovafaktura)\nKontakt: $supportEmail\n\n" +
                             "1. Spracúvané údaje: Google identifikátor účtu (UID, e-mail, meno), účtovné doklady (dodávateľ, IČO/DIČ, dátumy, sumy, DPH) a snímky dokladov.\n\n" +
                             "2. Účel a bezpečnosť: Autentifikácia cez Google/Firebase Auth, cloudová synchronizácia vo Firestore (prístup prísne izolovaný na váš UID), jednorazová AI extrakcia cez Firebase AI Logic (chránené cez App Check / Play Integrity) a overenie nákupov Google Play Billing.\n\n" +
-                            "3. Uchovávanie (retencia): Účet a doklady uchovávame počas aktívneho používania; v aplikácii ich vymažete okamžite (do 14 dní pri e-mailovej žiadosti). Dočasné PDF exporty v cache sa čistia po 24 hodinách a pri odhlásení. Technický hash tokenu nákupu (billingTokens bez čísel kariet) sa môže uchovávať v zákonnej daňovej a proti-podvodnej lehote.\n\n" +
-                            "4. Výmaz údajov: Účet a dáta vymažete priamo tu v Nastaveniach alebo e-mailom na $supportEmail.",
+                            "3. Lokálne údaje: PDF exporty sa čistia pri ďalšom exporte a odhlásení. Archivované fotografie zostávajú v súkromnom úložisku aplikácie; odhlásenie nezaručuje ich vymazanie.\n\n" +
+                            "4. Výmaz údajov: Výmaz spustíte tu v Nastaveniach alebo oň požiadate e-mailom na $supportEmail. Cloudový výmaz vyžaduje pripojenie a môže vyžadovať nové prihlásenie. Pri chybe sa výmaz nemusí dokončiť; riaďte sa zobrazenou správou. Technické záznamy o overení nákupov sa týmto postupom nemažú.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }

@@ -1,46 +1,87 @@
-# Backend Verifier — Google Play Billing (`BF-03`)
+# Backend overovania Google Play nákupov
 
-Tento priečinok obsahuje produkčnú **Firebase Cloud Functions v2** implementáciu pre overovanie nákupov a predplatného cez Google Play Developer API (`androidpublisher` v3).
+Tento priečinok obsahuje TypeScript implementáciu Firebase Cloud Functions v2
+pre overovanie nákupov a predplatného. Prítomnosť kódu ani úspech jednotkových
+testov nepotvrdzujú, že sú funkcie nasadené alebo že prešiel skutočný Play nákup.
+Aktuálny výsledok a blokery sú v [stave projektu](../docs/project-status.md).
 
-## Implementované funkcie
-1. **`verifyPlayPurchase`** (`onCall`, `region: europe-west1`, `enforceAppCheck: true`):
-   - Vyžaduje platný Firebase Auth token (`request.auth.uid`) aj App Check token.
-   - Overuje `packageName === "sk.bizagent.bleskovafaktura"`, známy `productId` z katalógu a dĺžku/formát `purchaseToken`.
-   - Pri jednorazových kreditoch (`blesk_credits_10`, `blesk_credits_50`, `blesk_credits_100`) volá `purchases.products.get`, overuje `purchaseState === 0` a následne produkt konzumuje.
-   - Pri predplatnom (`blesk_premium_monthly`) volá `purchases.subscriptionsv2.get`, kontroluje stav `ACTIVE` / `IN_GRACE_PERIOD` a vykoná `acknowledge`.
-   - Idempotencia a ochrana pred zneužitím: v jednej Firestore transakcii nad pomenovanou databázou `ai-studio-android-bleskovf-056698ab-4e20-4c12-b4ec-52ee9d53a81d` zapisuje SHA-256 hash tokenu do server-only kolekcie `billingTokens/{tokenHash}` (klientom zablokovanej cez `firestore.rules`). Opakované volanie tým istým používateľom je idempotentné (`ALREADY_PROCESSED`), pokus iným používateľom zlyhá s `permission-denied`.
-2. **`handlePlayRtdn`** (`onMessagePublished`, Pub/Sub topic `play-billing-rtdn`):
-   - Spracúva Real-time Developer Notifications (`subscriptionNotification`, `oneTimeProductNotification`, `voidedPurchaseNotification`) výhradne ako signál na opätovné overenie aktuálneho stavu nákupu cez Google Play Developer API; pri potvrdenom zrušení/expirácii deaktivuje `isSubscribed` a pri refundácii jednorazového balíka bezpečne odpočíta kredity (s orezaním `>= 0`).
+## Aktuálny rozsah: lokálne testy, billing 0 €
 
-## Postup nasadenia (vyžaduje váš Firebase + Play Console prístup)
-1. Vo Firebase Console prepnite projekt `gen-lang-client-0115180408` na **Blaze plan**.
-2. V Google Cloud aktivujte **Google Play Android Developer API** (`androidpublisher.googleapis.com`) a Pub/Sub topic `play-billing-rtdn`.
-3. V Google Play Console (*Users and permissions -> Service accounts*) udeľte Cloud Functions service účtu oprávnenie **View financial data, orders, and cancellation survey responses** + **Manage orders and subscriptions**.
-4. Vytvorte produkty v Play Console presne s ID:
-   - `blesk_premium_monthly` (predplatné)
-   - `blesk_credits_10`, `blesk_credits_50`, `blesk_credits_100` (jednorazové spotrebné produkty)
-5. Nainštalujte závislosti a nasaďte:
-   ```bash
-   cd functions
-   pnpm install --frozen-lockfile --registry=https://registry.npmjs.org/
-   pnpm test
-   cd ..
-   firebase deploy --only functions:verifyPlayPurchase,functions:handlePlayRtdn --project gen-lang-client-0115180408
-   ```
-6. Android klient (`PlayBillingManager`) už volá callable `verifyPlayPurchase` v regióne `europe-west1` pri nákupe aj pri obnove nepotvrdených/nekonzumovaných nákupov z Google Play.
+**Neaktivovať platený billing a nenasadzovať cloudové funkcie ani pravidlá.**
+Deployment Cloud Functions vyžaduje Blaze podľa
+[oficiálneho návodu Firebase](https://firebase.google.com/docs/functions/get-started).
+Nasadenie preto nie je súčasťou tohto lokálneho postupu. Skript `deploy` v
+`package.json` za aktuálneho rozhodnutia nespúšťaj.
 
-## Väzba účtu a stav vydania (16. 11. 2026)
+Lokálne testy verifikátora používajú náhrady Play klienta a úložiska. Nevyžadujú
+Play poverenia, platený projekt ani Firebase emulátor.
 
-Klient pri začatí nákupu odosiela `obfuscatedAccountId = SHA-256("blesk-play-account-v1:" + Firebase UID)`.
-Backend porovná identifikátor vrátený priamo Google Play API s prihláseným UID ešte pred prvým pripísaním.
-Nákupy zo starších klientov bez tejto väzby sa automaticky nepriraďujú prvému volajúcemu.
-Neznámy už spotrebovaný token sa odmietne; opakovanie známeho tokenu zostáva idempotentné a opakuje nedokončené consume.
+## Zostavenie a testovanie
 
-RTDN testovacia správa nemení nároky. Pub/Sub funkcia opakuje zlyhané doručenie (`retry: true`).
-Obe funkcie majú `minInstances: 0`, `maxInstances: 1`, `memory: "256MiB"`, `cpu: "gcf_gen1"` a `concurrency: 1`.
-Úsporná konfigurácia je určená pre malú internú testovaciu záťaž; zlomkové CPU môže predĺžiť cold start.
-Toto je kapacitný limit, nie cenový strop. Nevzťahuje sa na priame AI volania z klienta.
-Testy bežia proti zostavenému JavaScriptu, takže nevyžadujú experimentálne TypeScript stripovanie v Node.
-Používa sa úzky oficiálny klient `@googleapis/androidpublisher` namiesto načítania všetkých Google API.
+Z koreňa repozitára, s Node.js 22 a pnpm 12.15.0:
 
-Aktuálne blokery a živé dôkazy sú v `docs/RELEASE_EXECUTION_STATUS.md`; lokálny úspech testov nedokazuje nasadenie ani uskutočnený testovací nákup.
+```sh
+pnpm --dir functions install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/
+pnpm --dir functions test
+```
+
+`test` najprv spustí TypeScript build a potom Node test runner nad
+`test/verifier.test.mjs`. Testuje zostavený JavaScript; experimentálne stripovanie
+TypeScriptu nie je potrebné. Lockfile `functions/pnpm-lock.yaml` zostáva zdrojom
+presných verzií. Výstup `functions/lib/` ani `node_modules/` sa necommitujú.
+
+## Implementované rozhrania
+
+| Funkcia | Správanie v zdrojovom kóde |
+| --- | --- |
+| `verifyPlayPurchase` | Callable v `europe-west1`, vyžaduje Firebase Auth a vynucuje App Check. Overí balík, produkt, stav nákupu a väzbu na účet cez Google Play Developer API. |
+| `handlePlayRtdn` | Pub/Sub handler témy `play-billing-rtdn` v `europe-west1`. Notifikácia je podnetom na opätovné overenie stavu cez Play API, nie dôkazom nároku. Zlyhané doručenie sa opakuje. |
+
+[verifier.ts](src/verifier.ts) obsahuje doménovú logiku; [index.ts](src/index.ts)
+adaptéry Play API, Firestore a exporty funkcií. Používa sa
+`@googleapis/androidpublisher`, nie celý balík všetkých Google API.
+
+Verifikátor akceptuje iba `sk.bizagent.bleskovafaktura` a tento katalóg:
+
+| Produkt | Typ | Nárok po overení |
+| --- | --- | --- |
+| `blesk_credits_10` | Jednorazový | 10 kreditov |
+| `blesk_credits_50` | Jednorazový | 50 kreditov |
+| `blesk_credits_100` | Jednorazový | 100 kreditov |
+| `blesk_premium_monthly` | Predplatné | Predplatiteľský stav podľa Play API |
+
+Ceny sa overujú v Play Console a klient získava dostupné ceny cez Billing API;
+náhradná cena v UI nepotvrdzuje konfiguráciu produktu v obchode.
+
+## Vlastníctvo a idempotencia
+
+- Klient odosiela `obfuscatedAccountId` odvodený cez SHA-256 z
+  `blesk-play-account-v1:` a Firebase UID. Server ho porovná s hodnotou z Play API
+  pred prvým pripísaním nároku.
+- Token nákupu sa identifikuje SHA-256 hashom. Záznamy `billingTokens/{tokenHash}`
+  a zmeny používateľského nároku sa zapisujú transakčne do pomenovanej databázy
+  `ai-studio-android-bleskovf-056698ab-4e20-4c12-b4ec-52ee9d53a81d`.
+  Klientom je priame čítanie a zápis billing tokenov zakázané cez Firestore rules.
+- Opakovanie známeho nákupu tým istým používateľom nesmie pripísať nárok dvakrát.
+  Cudzí účet, chýbajúca väzba alebo neznámy už spotrebovaný token sa odmietajú.
+- Jednorazový produkt sa spotrebuje až po zápise nároku; opakovanie vie dokončiť
+  predtým neúspešné spotrebovanie. Predplatné používa overenie stavu a acknowledge.
+- Stav `PENDING` nie je zaplatený nákup. Klient čaká na dokončenie platby a
+  serverové overenie; samotný callback nesmie zvýšiť kredity.
+- RTDN testovacia správa nemení nároky. Refundácia alebo zmena predplatného sa
+  posúdia podľa znovu overeného stavu Play.
+
+Nákupné tokeny, poverenia ani obsah dokladov nepatria do logov alebo testovacích
+výstupov. Detaily implementácie dátových tokov sú v
+[architektúre](../docs/architecture.md).
+
+## Hranice úspornej konfigurácie a vydania
+
+Obe funkcie majú v kóde `minInstances: 0`, `maxInstances: 1`, `memory: "256MiB"`,
+`cpu: "gcf_gen1"`, `concurrency: 1` a timeout 60 sekúnd. Toto je obmedzenie
+kapacity, nie pevný cenový strop. Nevzťahuje sa na priame AI volania z Androidu.
+
+Prípadné budúce nasadenie potrebuje samostatne vyriešený billing, oprávnenia
+služobného účtu, Play produkty, RTDN a integračné testovanie. Tieto kroky sú pri
+aktuálnom rozhodnutí blokované. [Release checklist](../docs/release-signing-and-smoke-test.md)
+odlišuje lokálne dôkazy od zatiaľ neovereného produkčného účtovania a Play platieb.

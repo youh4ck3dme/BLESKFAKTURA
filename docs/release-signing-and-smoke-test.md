@@ -1,70 +1,122 @@
-# BF-19 Release Signing & Release Smoke Test — Blesková Faktúra (`sk.bizagent.bleskovafaktura`)
+# Podpisovanie a release smoke test
 
-## 1. Overené parametre vydania
-- `applicationId`: `sk.bizagent.bleskovafaktura`
-- `versionCode`: `2`
-- `versionName`: `1.1`
-- `minSdk`: `24`, `targetSdk`: `36`, `compileSdk`: `36.1`
-- Release App Check: `PlayIntegrityAppCheckProviderFactory` (bez `firebase-appcheck-debug` v release)
-- 16 KB page size kompatibilita natívnych `.so` (`arm64-v8a`, `x86_64`): `android:extractNativeLibs="false"` a všetky `LOAD` segmenty majú zarovnanie `0x4000` (16 384 B).
+Toto je kontrolný postup, nie potvrdenie publikovaného vydania. Aktuálne platí
+**0 €: neaktivovať platený billing, nenasadzovať backend ani pravidlá a
+nepublikovať do Play**. Stav konkrétnych overení a blokery udržiava
+[stav projektu](project-status.md). Lokálne testy a debug smoke nenahrádzajú
+Play-distribuovaný release ani produkčné overenie nákupov.
 
----
+## Parametre zo zdrojového kódu
 
-## 2. Podpisová identita (`BF-19`) — dve striktne odlíšené situácie
+| Parameter | Hodnota |
+| --- | --- |
+| `applicationId` | `sk.bizagent.bleskovafaktura` |
+| `versionName` / `versionCode` | `1.1` / `2` |
+| `minSdk` / `targetSdk` / `compileSdk` | `24` / `36` / `36.1` |
+| Release optimalizácia | R8 minifikácia aj resource shrinking zapnuté |
+| Release App Check | `PlayIntegrityAppCheckProviderFactory`; debug provider je iba v debug source sete a závislostiach |
 
-### A) Aplikácia EŠTE NIKDY nebola nahraná na Google Play (prvé vytvorenie upload kľúča)
-Vygenerujte jediný krát upload keystore mimo repozitára (nikdy ho necommitujte do Gitu):
+Hodnoty porovnaj s [app/build.gradle.kts](../app/build.gradle.kts) pri každej zmene
+verzie. `versionCode` v kóde nepotvrdzuje, že Play prijme ďalší upload.
 
-```bash
-keytool -genkeypair -v \
-  -keystore my-upload-key.jks \
-  -alias upload \
-  -keyalg RSA -keysize 2048 \
-  -validity 10000
+## Pôvodná podpisová identita
+
+Repozitár a CI už očakávajú existujúci upload certifikát. Bez porovnania
+s Play Console nevytváraj ani neregistruj nový náhradný kľúč. Heslá, privátny
+kľúč ani obsah keystore nepatria do chatu, Git alebo build logov.
+
+[CI workflow](../.github/workflows/android-ci.yml) kontroluje alias `upload`
+a tento verejný SHA-256 fingerprint upload certifikátu:
+
+```text
+B016994403F88828911CBDC2CACF5B1834D547ECAB9CCC28BA24C43963463348
 ```
 
-Odporúčané CI/CD uloženie v GitHub Secrets (`.github/workflows/android-ci.yml`):
-- `UPLOAD_KEYSTORE_BASE64`: `base64 -w0 my-upload-key.jks`
-- `STORE_PASSWORD`: heslo ku keystore
-- `KEY_PASSWORD`: heslo ku kľúču alias `upload`
+Fingerprint je kontrolná hodnota v CI, nie dôkaz, že je súkromný kľúč dostupný.
+Treba ho porovnať s aktuálnym upload certifikátom v Play Console.
+Upload kľúč a distribučný `App signing key` sú dve rozdielne identity:
+Google pri Play App Signing podpisuje distribuované APK svojim app signing kľúčom.
+Pre integrácie sa preto overujú príslušné certifikáty, nie iba lokálny upload podpis.
+Pozri [oficiálny návod Android](https://developer.android.com/studio/publish/app-signing).
 
-Lokálny build cez env premenné (bez ukladania hesiel do kódu):
-```bash
-export KEYSTORE_PATH=/cesta/k/my-upload-key.jks
-export STORE_PASSWORD='...'
-export KEY_PASSWORD='...'
-gradle :app:bundleRelease --console=plain
+Lokálny release build používa existujúce premenné:
+
+| Premenná | Význam |
+| --- | --- |
+| `KEYSTORE_PATH` | Absolútna cesta k pôvodnému upload keystore mimo Git |
+| `STORE_PASSWORD` | Heslo ku keystore zo schváleného bezpečného úložiska |
+| `KEY_PASSWORD` | Heslo k aliasu `upload` |
+
+Nevkladaj hodnoty hesiel do príkazov uložených v histórii. Pri chýbajúcom alebo
+nezhodnom pôvodnom kľúči označ podpisovanie **NOT VERIFIED** a build vynechaj.
+Prípadný oficiálny reset upload kľúča je samostatná operácia; tento návod ho nevykonáva.
+
+## Lokálny build a kontrola artefaktov
+
+Najprv priprav JDK 21 a SDK podľa [lokálneho návodu](local-verification.md).
+Pre funkčné živé Firebase musí existovať správna lokálna konfigurácia;
+`google-services.json` sa necommitne. Keď sú pôvodná identita aj premenné bezpečne
+dostupné a nebeží iný Gradle build, lokálny kontrolný príkaz je:
+
+```sh
+./gradlew :app:lintRelease :app:bundleRelease :app:assembleRelease \
+  --no-daemon --max-workers=1 --no-parallel --console=plain
 ```
 
-### B) Aplikácia UŽ MÁ registrovaný upload key v Google Play Console
-- **Nikdy** nevytvárajte nový náhradný keystore — Play Console nové podpisy odmietne.
-- Použite pôvodný `.jks` súbor a existujúce heslá cez `KEYSTORE_PATH` / `STORE_PASSWORD` / `KEY_PASSWORD` (alebo požiadajte o reset upload kľúča oficiálnym postupom v *Play Console -> App integrity*).
+Po úspešnom zostavení over podpisy a zaznamenaj hashe. Pre príkaz `apksigner`
+nastav `ANDROID_HOME` na adresár s rovnakým SDK aj vtedy, keď Gradle používa
+iba `sdk.dir` z `local.properties`:
 
-### Kontrola výsledného `.aab` po podpísaní
-```bash
-# Overenie podpisu a certifikátu
-jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab
-
-# Získanie SHA-1 a SHA-256 pre registráciu do Firebase Console (nikdy bez hesiel v logu)
-keytool -list -v -keystore "$KEYSTORE_PATH" -alias upload
-
-# Po zapnutí Play App Signing v Play Console -> App integrity skopírujte aj
-# "App signing key certificate" SHA-1 a SHA-256 do Firebase Console!
+```sh
+: "${ANDROID_HOME:?Nastavte ANDROID_HOME na adresár Android SDK}"
+bundle=app/build/outputs/bundle/release/app-release.aab
+apk=app/build/outputs/apk/release/app-release.apk
+jarsigner -verify -strict -keystore "$KEYSTORE_PATH" -storepass:env STORE_PASSWORD "$bundle"
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk"
+sha256sum "$bundle" "$apk"
 ```
 
----
+Tieto príkazy neoverujú inštaláciu z Google Play ani úspech Play Integrity.
+Kompatibilitu 16 KB stránok kontroluj na konkrétnom výslednom artefakte a
+príslušnom runtime podľa [oficiálneho návodu Android](https://developer.android.com/guide/practices/page-sizes).
+Samotné `extractNativeLibs=false` alebo úspešný debug build ju nepotvrdzujú.
+Bez aktuálneho binárneho a runtime dôkazu ju neoznačuj PASS.
 
-## 3. End-to-End Release Smoke Test (na fyzickom Android zariadení s Play Store / Internal Testing)
+## Podmienky signed release v CI
 
-Vykonajte po nasadení `/functions/` (Blaze) a nahraní podpísaného `.aab` do **Internal testing** stopy v Play Console (s testovacím účtom pridaným do *License testing*):
+Release krok beží iba na push, keď existujú `GOOGLE_SERVICES_JSON`,
+`UPLOAD_KEYSTORE_BASE64`, `STORE_PASSWORD` a `KEY_PASSWORD`; konfigurácia musí
+zodpovedať správnemu projektu a Android app ID a upload fingerprint musí sedieť.
+PR tieto secrets na release build nedostáva.
 
-1. **Google Sign-In:** Prihláste sa reálnym Google účtom (overenie SHA-256 Play App Signing + Web Client ID). Demo tlačidlo sa v release builde nesmie zobraziť.
-2. **Firebase App Check (Play Integrity):** Otvorte Firebase Console -> *App Check -> Metrics*; po prvých dopytoch musia byť overené požiadavky označené ako *Verified*.
-3. **Kamera a oprávnenie:** Otvorte *Skenovať* -> *Odfotiť doklad*. Prvýkrát sa zobrazí systémová žiadosť `CAMERA`; po povolení sa otvorí fotoaparát bez `SecurityException`; po odmietnutí sa zobrazí zrozumiteľný banner bez pádu.
-4. **AI sken a atómová rezervácia kreditu:** Odfoťte syntetický alebo testovací doklad -> stav prejde cez *Scanning* -> pred AI volaním sa v `users/{uid}` rezervuje 1 kredit (`activeReservationId`) -> po úspechu AI sa rezervácia potvrdí (`commitScanReservation`). Pri neplatnom obrázku (napr. selfie/stena) sa kredit vráti späť (`+1`).
-5. **Uloženie a archív originálu:** Skontrolujte extrahované sumy, DPH a kategóriu -> uložte doklad -> skontrolujte, že súbor snímky existuje v detaile dokladu a formulár sa vyčistil.
-6. **Firestore synchronizácia:** Odhláste sa / prihláste sa na druhom zariadení alebo po vymazaní dát aplikácie -> doklady z pomenovanej databázy `users/{uid}/invoices/*` aj zostatok kreditov sa musia automaticky obnoviť (lokálna snímka z iného zariadenia chýba korektne s fallbackom, účtovné dáta sú kompletné).
-7. **Play testovací nákup (License tester):** V *Predplatné a Kredity* kúpte `blesk_credits_10` -> dokončite testovaciu platbu -> dialóg prejde cez `PendingVerification` (*Overujem nákup na serveri*).
-8. **Serverová verifikácia (`verifyPlayPurchase`):** Skontrolujte Cloud Functions logy (`europe-west1`) — token sa overil voči Google Play Developer API, do `billingTokens/{sha256}` sa zapísal záznam a produkt sa skonzumoval až po zápise nároku.
-9. **Pripísanie nároku:** UI zobrazí `Verified` a Firestore snapshot automaticky zvýši `credits` o `+10` bez akéhokoľvek klientského zápisu do `credits`. Opakované vyvolanie (`Obnoviť a overiť nákupy`) nevydá kredity dvakrát.
-10. **Obnovenie aplikácie a predplatné/výmaz:** Zatvorte a znova otvorte aplikáciu (force-stop + launch) -> kredity ostávajú pripísané. Následne otestujte `blesk_premium_monthly` -> `isSubscribed = true` -> zrušenie v Play -> RTDN po expirácii nastaví `isSubscribed = false`. Na záver na testovacom účte otestujte *Nastavenia -> Vymazať účet a všetky dáta*.
+Workflow zostaví a overí AAB aj APK a zverejní CI artefakt
+`bleskova-faktura-release-signed` iba pri úspešnom release kroku. To nie je upload
+do Play. Bez splnenia podmienok sa release zrozumiteľne preskočí; úspešný debug
+job nemožno označiť za podpisové ani release overenie.
+
+## Smoke checklist a hranice dôkazov
+
+Na každom výsledku uveď commit, variant, hash artefaktu, pôvod inštalácie,
+Android verziu, dátum a PASS / FAIL / NOT VERIFIED. Používaj syntetické doklady;
+do protokolu neukladaj App Check tajomstvá, auth tokeny ani raw HTTP telá.
+
+| Kontrola | Akceptačné kritérium a rozsah |
+| --- | --- |
+| Identita | Nainštalovaný variant, applicationId, Firebase app ID a skutočný certifikát zodpovedajú zamýšľanej distribúcii. |
+| Prihlásenie | Google prihlásenie funguje pre danú distribučnú identitu; demo tlačidlo v release chýba. |
+| App Check | Release používa Play Integrity a chránené volanie je prijaté bez debug fallbacku a bez vypnutia enforcementu. |
+| Kamera/import | Povolenie aj jeho odmietnutie sú zvládnuté bez pádu; import a zachytenie čitateľného testovacieho dokladu fungujú. |
+| AI a kredity | Na testovacom účte bez predplatného úspech vytvorí validované údaje a spotrebuje jeden kredit; chyba/odmietnutie vráti rezerváciu správnemu účtu. Overiť aj zrušenie, opakovanie, zmenu účtu a samostatne režim predplatiteľa. |
+| Uloženie a export | Kontrola údajov, uloženie, detail, dostupnosť lokálnej snímky a PDF export fungujú bez úniku údajov. |
+| Cloud synchronizácia | Pri skutočnom Firebase účte sa účtovné údaje a kreditový stav obnovia na druhom zariadení. Lokálna snímka má pri neprítomnosti korektný fallback. |
+| Play nákup | Licenčný tester dokončí nákup cez Play; nárok vznikne až po serverovom overení a opakované overenie ho nepripíše dvakrát. PENDING sa nepripisuje. |
+| Predplatné/RTDN/výmaz | Obnova, zmena alebo zrušenie predplatného, opakované RTDN a výmaz účtu majú overený výsledok na testovacom účte. |
+
+Lokálny demo smoke s Room nedokazuje produkčné Firestore účtovanie. Appetize
+fresh inštalácia potrebuje vlastný debug App Check dôkaz a nepotvrdzuje release
+Play Integrity ani Play nákup. Pri aktuálne blokovanom backend nasadení zostávajú
+súvisiace cloudové a Play kontroly **NOT VERIFIED**; nepreskakujú sa vypnutím ochrany.
+
+[Backend návod](../functions/README.md) popisuje implementáciu a bezplatné lokálne
+testy. [Firebase diagnostika](firebase-and-troubleshooting.md) rieši konfiguráciu
+a App Check bez publikovania či zdieľania tajomstiev.
