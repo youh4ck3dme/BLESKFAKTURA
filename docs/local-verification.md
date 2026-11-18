@@ -40,11 +40,34 @@ Z koreňa repozitára:
 
 ```sh
 python3 scripts/check-docs.py
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 bash -n scripts/build-local-debug.sh
 ```
 
 Kontrola dokumentácie používa iba Python štandardnú knižnicu; overuje lokálne
 odkazy a fragmenty bez siete. Tieto kontroly nenahrádzajú build ani runtime smoke.
+
+## Kategórie automatizovaných testov
+
+Konkrétne výsledky patria ku commitu a CI behu, nie iba k počtu testovacích metód.
+Nasledujúca mapa odlišuje skutočné lokálne kontrakty od systémov nahradených fake.
+
+| Kategória | Automatizované scenáre a testy | Hranica dôkazu |
+| --- | --- | --- |
+| Kamera a import | `ScanCaptureTest`: odmietnuté povolenie, zrušené fotenie/picker bez odpočtu; `ReceiptImageProcessorTest`: poškodený a veľký obrázok, súkromná URI, čistenie a ochrana cudzích súborov | ActivityResultRegistry je testovací; nie fyzický fotoaparát |
+| Validácia revízie | `ScanReviewFormTest`, `SlovakFinanceUtilsTest`: prázdny dodávateľ, záporná suma, sadzba/DPH mimo rozsahu, dátum s textom navyše, slovenské formáty, zablokovaný dvojitý save | Compose/Robolectric, nie ručné zadávanie na telefóne |
+| AI a kredity | `InvoiceAiValidationTest`, `InvoiceViewModelScanTest`: timeout/cancellation, neplatný doklad, bez účtu/kreditov, subscriber, opakovaný tap, stará odpoveď a refund | AI transport je nahradený; živý model a kvóty NOT VERIFIED |
+| Databáza a izolácia | `InvoiceRepositoryRuleTest`: rezervácie, opakovaný/starnúci reservation ID, cudzie read/write/delete, účet po výmaze | Izolovaný Auth/Firestore emulátor, nie produkčné nasadenie |
+| PDF a uloženie | `PdfExporterTest`, scan ViewModel/form: presné centy, chýbajúca DPH, čiastočný zápis, bezpečné čistenie, zachovanie revízie a identity retry | Report/write seam; systémové zdieľanie a natívne PDF renderovanie na telefóne NOT VERIFIED |
+| Dashboard | `DashboardScreenTest`, `DashboardSummaryTest`: filtre, pending nákupy, splatnosť dnes/včera, neplatný dátum, záporný pending počet | Compose/fake repository, nie live cloud |
+| Účet a súkromie | `SettingsAccountTest`, ViewModel/Firestore error testy: demo prihlásenie, pravdivý lokálny opis, zrušený/odmietnutý výmaz, retry a redakcia SDK údajov | Google OAuth a skutočný serverový výmaz zostávajú NOT VERIFIED |
+| App Check | `AppCheckDebugConfigurationTest`: súkromný launch extra, zachovanie existujúcej identity bez extra, redakcia vlastných logov | Syntetická nenaregistrovaná identita, žiadna výmena tokenu ani attestation |
+| Nákupy a backend | `PlayBillingManagerTest`, `functions/test/verifier.test.mjs`: neplatné vstupy, retry, pending, účtová väzba, expiry, RTDN a výpadok Play API bez pripísania | Fake Play API; skutočný nákup a RTDN doručenie NOT VERIFIED |
+| CI a dokumentácia | `scripts/tests/test_check_docs.py`: platné/rozbité odkazy, fragmenty, Unicode, cesta mimo repo, ignorované generované dokumenty; executable a shell kontrola | Lokálne súbory; externé odkazy sa nefetchnú |
+| Release zdrojový variant | CI spúšťa `compileReleaseKotlin` a `lintRelease` bez podpisovania | Nepotvrdzuje podpis, 16 KB runtime, Play Integrity ani distribúciu |
+
+Pri novom teste používaj syntetické údaje, pomenované demo Firebase aplikácie alebo
+fakes. Úspech testu s fake službou nesmie byť uvedený ako úspešná živá integrácia.
 
 ## Backend a všetky Android testy
 
@@ -56,6 +79,8 @@ pnpm --dir functions test
 pnpm dlx firebase-tools@15.36.0 emulators:exec \
   --only firestore,auth --project demo-no-project --config firebase.json --non-interactive \
   './gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --continue --no-daemon --max-workers=1 --no-parallel --console=plain'
+./gradlew :app:compileReleaseKotlin :app:lintRelease \
+  --no-daemon --max-workers=1 --no-parallel --console=plain
 ```
 
 Explicitný registry obíde prípadné nefunkčné lokálne zrkadlo bez zmeny globálnej

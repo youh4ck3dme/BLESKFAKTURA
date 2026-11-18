@@ -6,6 +6,9 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.assertIsNotEnabled
 import com.example.data.ExtractedInvoiceJson
 import com.example.data.Invoice
 import com.example.ui.screens.ReviewScannedInvoiceForm
@@ -23,6 +26,78 @@ import org.robolectric.annotation.Config
 class ScanReviewFormTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    private fun showReview(attempts: MutableList<Invoice>, saving: Boolean = false) {
+        composeRule.setContent {
+            MyApplicationTheme {
+                ReviewScannedInvoiceForm(
+                    extracted = ExtractedInvoiceJson(
+                        supplierName = "Synthetic merchant", issueDate = "2026-11-18", totalAmount = 12.30
+                    ),
+                    bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
+                    isSaving = saving, onCancel = {}, onConfirm = { attempts += it }
+                )
+            }
+        }
+    }
+
+    private fun replace(tag: String, text: String) {
+        composeRule.onNodeWithTag(tag).performScrollTo().performTextReplacement(text)
+    }
+
+    private fun confirm() {
+        composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("confirm_scanned_button"))
+        composeRule.onNodeWithTag("confirm_scanned_button").performClick()
+    }
+
+    @Test
+    fun invalidFields_blockSaveUntilCorrectedAndNormalizeSlovakValues() {
+        val attempts = mutableListOf<Invoice>()
+        showReview(attempts)
+        val invalid = listOf(
+            Triple("scanned_supplier_input", " ", "Synthetic merchant"),
+            Triple("scanned_amount_input", "-1", "12,30"),
+            Triple("scanned_vat_rate_input", "101", "20"),
+            Triple("scanned_date_input", "31.02.2026", "18.11.2026"),
+            Triple("scanned_due_date_input", "2026-11-18 extra", "30.11.2026")
+        )
+        for ((tag, bad, good) in invalid) {
+            replace(tag, bad)
+            confirm()
+            composeRule.runOnIdle { assertTrue(attempts.isEmpty()) }
+            composeRule.onNodeWithTag("scan_validation_error").assertExists()
+            replace(tag, good)
+        }
+        confirm()
+        composeRule.runOnIdle {
+            assertEquals(1, attempts.size)
+            assertEquals(1230L, attempts.single().totalAmountCents)
+            assertEquals("2026-11-18", attempts.single().issueDate)
+            assertEquals("2026-11-30", attempts.single().dueDate)
+        }
+    }
+
+    @Test
+    fun oversizedVat_isRejectedBeforeCentConversionAndCanBeCorrected() {
+        val attempts = mutableListOf<Invoice>()
+        showReview(attempts)
+        replace("scanned_vat_amount_input", "1e100")
+        confirm()
+        composeRule.runOnIdle { assertTrue(attempts.isEmpty()) }
+        composeRule.onNodeWithTag("scan_validation_error").assertExists()
+        replace("scanned_vat_amount_input", "2,05")
+        confirm()
+        composeRule.runOnIdle { assertEquals(205L, attempts.single().vatAmountCents) }
+    }
+
+    @Test
+    fun savingForm_disablesConfirmationToPreventDuplicateWrites() {
+        val attempts = mutableListOf<Invoice>()
+        showReview(attempts, saving = true)
+        composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("confirm_scanned_button"))
+        composeRule.onNodeWithTag("confirm_scanned_button").assertIsNotEnabled()
+        composeRule.runOnIdle { assertTrue(attempts.isEmpty()) }
+    }
 
     @Test
     fun retryAfterSaveFailure_preservesDocumentIdentityAndReviewedValues() {

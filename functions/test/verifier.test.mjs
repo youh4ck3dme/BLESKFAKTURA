@@ -5,6 +5,7 @@ import {
   EXPECTED_PACKAGE_NAME,
   VerificationError,
   hashPurchaseToken,
+  isSubscriptionEntitled,
   processPlayRtdnNotification,
   verifyAndGrantPlayPurchase,
 } from "../lib/verifier.js";
@@ -81,6 +82,70 @@ function createFakePlayClient(overrides = {}, uid = "user_1") {
     ...overrides,
   };
 }
+
+test("Invalid identity, token bounds and inherited catalog names never call Play or storage", async () => {
+  const valid = { uid: "user_1", packageName: EXPECTED_PACKAGE_NAME, productId: "blesk_credits_10", purchaseToken: "synthetic-token-input-12345" };
+  for (const [patch, code] of [
+    [{ uid: " " }, "unauthenticated"],
+    [{ uid: undefined }, "unauthenticated"],
+    [{ purchaseToken: "short" }, "invalid-argument"],
+    [{ purchaseToken: "x".repeat(2049) }, "invalid-argument"],
+    [{ productId: "toString" }, "invalid-argument"],
+    [{ productId: "__proto__" }, "invalid-argument"],
+  ]) {
+    let queries = 0;
+    const client = createFakePlayClient({ async getProductPurchase() { queries++; throw new Error("must not query"); } });
+    const store = createInMemoryStore();
+    await assert.rejects(() => verifyAndGrantPlayPurchase({ ...valid, ...patch }, client, store),
+      err => err instanceof VerificationError && err.code === code);
+    assert.equal(queries, 0);
+    assert.equal(store.tokens.size, 0);
+    assert.equal(store.users.size, 0);
+    assert.equal(client.consumed.length, 0);
+  }
+});
+
+test("Subscription entitlement respects exact expiry, canceled grace and inactive states", () => {
+  const now = 1000;
+  for (const state of ["SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD", "SUBSCRIPTION_STATE_CANCELED"]) {
+    assert.equal(isSubscriptionEntitled({ subscriptionState: state, expiryTimeMillis: now + 1 }, now), true);
+    assert.equal(isSubscriptionEntitled({ subscriptionState: state, expiryTimeMillis: now }, now), false);
+    assert.equal(isSubscriptionEntitled({ subscriptionState: state }, now), false);
+  }
+  for (const state of ["SUBSCRIPTION_STATE_ON_HOLD", "SUBSCRIPTION_STATE_PAUSED", "SUBSCRIPTION_STATE_EXPIRED", "UNKNOWN"]) {
+    assert.equal(isSubscriptionEntitled({ subscriptionState: state, expiryTimeMillis: now + 1 }, now), false);
+  }
+});
+
+test("Foreign, empty and unknown voided RTDN notifications cannot change entitlements", async () => {
+  let queries = 0;
+  const client = createFakePlayClient({
+    async getProductPurchase() { queries++; throw new Error("must not query"); },
+    async getSubscriptionV2() { queries++; throw new Error("must not query"); },
+  });
+  const store = createInMemoryStore();
+  for (const [payload, action] of [
+    [{ packageName: "other.package", testNotification: {} }, "IGNORED_PACKAGE"],
+    [{ packageName: EXPECTED_PACKAGE_NAME }, "UNHANDLED_NOTIFICATION"],
+    [{ packageName: EXPECTED_PACKAGE_NAME, voidedPurchaseNotification: { purchaseToken: "unknown-synthetic-purchase" } }, "UNKNOWN_TOKEN"],
+  ]) {
+    assert.deepEqual(await processPlayRtdnNotification(payload, client, store), { handled: false, action });
+    assert.equal(store.tokens.size, 0);
+    assert.equal(store.users.size, 0);
+  }
+  assert.equal(queries, 0);
+});
+
+test("Play API outage leaves purchases unconsumed and grants no credits", async () => {
+  const store = createInMemoryStore();
+  const client = createFakePlayClient({ async getProductPurchase() { throw new Error("synthetic network outage"); } });
+  await assert.rejects(() => verifyAndGrantPlayPurchase({
+    uid: "user_1", packageName: EXPECTED_PACKAGE_NAME, productId: "blesk_credits_10", purchaseToken: "synthetic-network-purchase"
+  }, client, store), /synthetic network outage/);
+  assert.equal(store.tokens.size, 0);
+  assert.equal(store.users.size, 0);
+  assert.equal(client.consumed.length, 0);
+});
 
 test("Rejects packageName mismatch and unknown productId", async () => {
   const store = createInMemoryStore();

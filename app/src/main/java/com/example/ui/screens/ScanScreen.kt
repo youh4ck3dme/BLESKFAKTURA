@@ -1189,6 +1189,11 @@ fun ReviewScannedInvoiceForm(
                                 validationError = "Neplatný formát sumy DPH."
                                 return@Button
                             }
+                            // Validate before conversion: a pasted huge decimal can overflow Long cents.
+                            if (parsedVat > parsedAmount) {
+                                validationError = "Suma DPH nemôže byť vyššia než celková suma s DPH."
+                                return@Button
+                            }
                             val vc = SlovakFinanceUtils.bigDecimalToCents(parsedVat)
                             if (vc > totalCents) {
                                 validationError = "Suma DPH nemôže byť vyššia než celková suma s DPH."

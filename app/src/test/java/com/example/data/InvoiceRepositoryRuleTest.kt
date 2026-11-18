@@ -29,6 +29,60 @@ import java.util.UUID
 class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     @Test
+    fun staleReservationCannotCommitOrRefundANewerScan() = runBlocking {
+        val uid = signInTestUser("stale_${UUID.randomUUID()}@test.sk")
+        val repo = InvoiceRepository(context, firestore, auth)
+        try {
+            withTimeout(DEFAULT_TIMEOUT_MS) { repo.initializeUserStats(uid) }
+            val first = withTimeout(DEFAULT_TIMEOUT_MS) { repo.reserveScanCredit(uid) } as CreditReservationResult.Reserved
+            withTimeout(DEFAULT_TIMEOUT_MS) { repo.commitScanReservation(uid, first.reservationId) }
+            val second = withTimeout(DEFAULT_TIMEOUT_MS) { repo.reserveScanCredit(uid) } as CreditReservationResult.Reserved
+            withTimeout(DEFAULT_TIMEOUT_MS) {
+                repo.commitScanReservation(uid, first.reservationId)
+                repo.rollbackScanReservation(uid, first.reservationId)
+            }
+            val active = withTimeout(DEFAULT_TIMEOUT_MS) { firestore.collection("users").document(uid).get().await() }
+            assertEquals(8L, active.getLong("credits"))
+            assertEquals(second.reservationId, active.getString("activeReservationId"))
+            withTimeout(DEFAULT_TIMEOUT_MS) { repo.rollbackScanReservation(uid, second.reservationId) }
+            val settled = withTimeout(DEFAULT_TIMEOUT_MS) { firestore.collection("users").document(uid).get().await() }
+            assertEquals(9L, settled.getLong("credits"))
+            assertNull(settled.getString("activeReservationId"))
+        } finally { repo.stopCloudSync() }
+    }
+
+    @Test
+    fun anotherUserCannotOverwriteOrDeleteAnOwnersInvoice() = runBlocking {
+        val email = "owner_write_${UUID.randomUUID()}@test.sk"
+        val uid = signInTestUser(email)
+        val repo = InvoiceRepository(context, firestore, auth)
+        val invoice = Invoice(id = UUID.randomUUID().toString(), supplierName = "Synthetic private merchant",
+            issueDate = "2026-11-18", totalAmountCents = 1000L, userId = uid)
+        try {
+            withTimeout(DEFAULT_TIMEOUT_MS) {
+                repo.initializeUserStats(uid)
+                assertTrue(repo.insertInvoice(invoice).isSuccess)
+            }
+            repo.stopCloudSync()
+            signInTestUser("other_write_${UUID.randomUUID()}@test.sk")
+            val target = firestore.collection("users").document(uid).collection("invoices").document(invoice.id)
+            for (delete in listOf(false, true)) {
+                try {
+                    withTimeout(DEFAULT_TIMEOUT_MS) {
+                        if (delete) target.delete().await() else target.update("supplierName", "forged").await()
+                    }
+                    fail("A different account must not mutate the owner's invoice")
+                } catch (e: Exception) {
+                    assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, e.unwrapFirestoreException()?.code)
+                }
+            }
+            assertEquals(uid, signInTestUser(email))
+            val unchanged = withTimeout(DEFAULT_TIMEOUT_MS) { target.get().await() }
+            assertEquals(invoice.supplierName, unchanged.getString("supplierName"))
+        } finally { repo.stopCloudSync() }
+    }
+
+    @Test
     fun initializeUserStats_newUser_createsFirestoreDocWith10Credits() = runBlocking {
         val uid = signInTestUser("alice_${UUID.randomUUID()}@test.sk")
         val repo = InvoiceRepository(context, firestore, auth)
@@ -317,7 +371,8 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     @Test
     fun deleteAccount_removesCloudAndLocalUserInvoicesAndProfile() = runBlocking {
-        val uid = signInTestUser("del_${UUID.randomUUID()}@test.sk")
+        val email = "del_${UUID.randomUUID()}@test.sk"
+        val uid = signInTestUser(email)
         val repo = InvoiceRepository(context, firestore, auth)
         try {
             withTimeout(DEFAULT_TIMEOUT_MS) { repo.initializeUserStats(uid) }
@@ -340,8 +395,8 @@ class InvoiceRepositoryRuleTest : FirestoreEmulatorTestBase() {
             assertTrue("deleteAccount failed: ${delRes.exceptionOrNull()}", delRes.isSuccess)
             assertEquals(null, repo.currentUser.value)
 
-            // Re-sign in same email / new account or check via fresh sign-in is empty
-            val newUid = signInTestUser("check_after_del_${UUID.randomUUID()}@test.sk")
+            // Reusing the same email must create a new Auth identity, not recover the deleted account.
+            val newUid = signInTestUser(email)
             assertFalse(newUid == uid)
         } finally {
             repo.stopCloudSync()

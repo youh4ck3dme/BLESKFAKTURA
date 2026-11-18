@@ -83,6 +83,61 @@ class InvoiceViewModelScanTest {
     }
 
     @Test
+    fun scanWithoutAccount_doesNotReserveCreditOrCallAi() = runTest(dispatcher) {
+        val repository = FakeInvoiceDataGateway(initialUser = null)
+        var aiCalls = 0
+        val vm = viewModel(repository, InvoiceAiExtractor { aiCalls++; AiExtractionResult.Success(data) })
+        vm.scanInvoiceImage(bitmap)
+        runCurrent()
+        assertTrue(vm.scanState.value is ScanUiState.Error)
+        assertEquals(0, repository.reserveCalls)
+        assertEquals(0, aiCalls)
+    }
+
+    @Test
+    fun insufficientCredits_doesNotCallAiOrCreateRefund() = runTest(dispatcher) {
+        val repository = FakeInvoiceDataGateway(initialCredits = 0)
+        var aiCalls = 0
+        val vm = viewModel(repository, InvoiceAiExtractor { aiCalls++; AiExtractionResult.Success(data) })
+        vm.scanInvoiceImage(bitmap)
+        runCurrent()
+        assertTrue(vm.scanState.value is ScanUiState.Error)
+        assertEquals(0, aiCalls)
+        assertEquals(0, repository.rollbackCalls)
+        assertEquals(0, repository.currentStatsSnapshot().credits)
+    }
+
+    @Test
+    fun repeatedScanTap_whileRequestPendingOnlyReservesAndCallsAiOnce() = runTest(dispatcher) {
+        val reply = CompletableDeferred<AiExtractionResult>()
+        val repository = FakeInvoiceDataGateway()
+        var aiCalls = 0
+        val vm = viewModel(repository, InvoiceAiExtractor { aiCalls++; reply.await() })
+        vm.scanInvoiceImage(bitmap)
+        runCurrent()
+        vm.scanInvoiceImage(bitmap)
+        runCurrent()
+        assertEquals(1, repository.reserveCalls)
+        assertEquals(1, aiCalls)
+        reply.complete(AiExtractionResult.Success(data))
+        runCurrent()
+        assertEquals(9, repository.currentStatsSnapshot().credits)
+        assertEquals(1, repository.commitCalls)
+    }
+
+    @Test
+    fun subscriberInvalidDocument_doesNotDebitOrInventARefund() = runTest(dispatcher) {
+        val repository = FakeInvoiceDataGateway(initialCredits = 0, initialSubscribed = true)
+        val vm = viewModel(repository, InvoiceAiExtractor { AiExtractionResult.InvalidDocument("Nejde o doklad.") })
+        vm.scanInvoiceImage(bitmap)
+        runCurrent()
+        assertEquals(0, repository.currentStatsSnapshot().credits)
+        assertEquals(0, repository.commitCalls)
+        assertEquals(0, repository.rollbackCalls)
+        assertEquals("Nejde o doklad.", (vm.scanState.value as ScanUiState.Error).message)
+    }
+
+    @Test
     fun rejectedScan_refundsExactlyOnce() = runTest(dispatcher) {
         val repository = FakeInvoiceDataGateway().apply { firebaseModeEnabled = false }
         val vm = viewModel(repository, InvoiceAiExtractor { AiExtractionResult.ServiceError("AI analýza sa nepodarila.") })

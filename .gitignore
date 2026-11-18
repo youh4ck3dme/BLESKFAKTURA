@@ -28,6 +28,7 @@ debug.keystore
 key.properties
 *-debug.log
 node_modules/
+__pycache__/
 functions/lib/
 hosting/legal/
 app/google-services.json

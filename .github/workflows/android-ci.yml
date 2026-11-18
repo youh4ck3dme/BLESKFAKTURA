@@ -25,6 +25,7 @@ jobs:
 
       - name: Validate documentation and build entrypoints
         run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
           python3 scripts/check-docs.py
           bash -n gradlew release.sh scripts/build-local-debug.sh
           test -x gradlew
@@ -109,6 +110,11 @@ jobs:
           pnpm dlx firebase-tools@15.36.0 emulators:exec \
             --only firestore,auth --project demo-no-project --config firebase.json --non-interactive \
             './gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --continue --no-daemon --max-workers=1 --no-parallel --console=plain'
+
+      - name: Compile and lint release sources without signing
+        run: |
+          ./gradlew :app:compileReleaseKotlin :app:lintRelease \
+            --no-daemon --max-workers=1 --no-parallel --console=plain
 
       - name: Check signed release availability
         id: release_gate
