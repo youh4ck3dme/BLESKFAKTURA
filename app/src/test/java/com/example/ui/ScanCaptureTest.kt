@@ -14,7 +14,6 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.core.app.ActivityOptionsCompat
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
@@ -70,8 +69,8 @@ class ScanCaptureTest {
             }
         })
         compose.onNodeWithTag("fab_instant_camera_capture").performClick()
-        compose.onNodeWithTag("camera_permission_rationale").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("scan_gallery_button").performScrollTo().assertIsEnabled()
+        compose.onNodeWithTag("camera_permission_rationale").assertIsDisplayed()
+        compose.onNodeWithTag("scan_gallery_button").assertIsEnabled()
         compose.runOnIdle {
             assertEquals(1, permissionRequests)
             assertTrue(vm.scanState.value is ScanUiState.Idle)
@@ -107,7 +106,7 @@ class ScanCaptureTest {
                 dispatchResult<Uri?>(code, null)
             }
         })
-        compose.onNodeWithTag("scan_gallery_button").performScrollTo().performClick()
+        compose.onNodeWithTag("scan_gallery_button").performClick()
         compose.runOnIdle {
             assertTrue(vm.scanState.value is ScanUiState.Idle)
             assertEquals(0, repository.reserveCalls)
