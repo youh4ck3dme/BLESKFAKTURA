@@ -6,9 +6,12 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.printToString
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.semantics.SemanticsActions
 import com.example.data.ExtractedInvoiceJson
 import com.example.data.Invoice
 import com.example.ui.screens.ReviewScannedInvoiceForm
@@ -42,12 +45,14 @@ class ScanReviewFormTest {
     }
 
     private fun replace(tag: String, text: String) {
-        composeRule.onNodeWithTag(tag).performScrollTo().performTextReplacement(text)
+        composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag(tag))
+        composeRule.onNodeWithTag(tag).performTextReplacement(text)
+        composeRule.waitForIdle()
     }
 
     private fun confirm() {
         composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("confirm_scanned_button"))
-        composeRule.onNodeWithTag("confirm_scanned_button").performClick()
+        composeRule.onNodeWithTag("confirm_scanned_button").performSemanticsAction(SemanticsActions.OnClick) { it() }
     }
 
     @Test
@@ -69,8 +74,9 @@ class ScanReviewFormTest {
             replace(tag, good)
         }
         confirm()
+        val diagnostic = composeRule.onRoot().printToString()
         composeRule.runOnIdle {
-            assertEquals(1, attempts.size)
+            assertEquals(diagnostic, 1, attempts.size)
             assertEquals(1230L, attempts.single().totalAmountCents)
             assertEquals("2026-11-18", attempts.single().issueDate)
             assertEquals("2026-11-30", attempts.single().dueDate)
@@ -87,7 +93,11 @@ class ScanReviewFormTest {
         composeRule.onNodeWithTag("scan_validation_error").assertExists()
         replace("scanned_vat_amount_input", "2,05")
         confirm()
-        composeRule.runOnIdle { assertEquals(205L, attempts.single().vatAmountCents) }
+        val diagnostic = composeRule.onRoot().printToString()
+        composeRule.runOnIdle {
+            assertEquals(diagnostic, 1, attempts.size)
+            assertEquals(205L, attempts.single().vatAmountCents)
+        }
     }
 
     @Test

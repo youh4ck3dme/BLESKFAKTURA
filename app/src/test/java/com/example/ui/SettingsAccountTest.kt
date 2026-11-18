@@ -94,7 +94,7 @@ class SettingsAccountTest {
             compose.onNodeWithTag("confirm_delete_account_button").performClick()
             compose.onNodeWithText("Časť údajov už mohla byť odstránená.", substring = true).assertExists()
             compose.onNodeWithText("PRIVATE_SDK_MARKER", substring = true).assertDoesNotExist()
-            compose.onNodeWithText("Zavrieť").performClick()
+            compose.onNodeWithText("Rozumiem").performClick()
         }
         compose.runOnIdle {
             assertEquals(2, deletionCalls)
