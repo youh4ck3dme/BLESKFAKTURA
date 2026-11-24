@@ -158,3 +158,28 @@ považovať za dôkaz pre novú reláciu. Kým konkrétna relácia nemá overen�
 App Check a úspešný AI výsledok, označ živý AI sken **NOT VERIFIED**.
 Appetize dokumentuje [reinštaláciu ako reset dát](https://docs.appetize.io/guides-and-samples/common-testing-scenarios);
 väzba na novú inštaláciu je dôsledkom lokálneho App Check stavu.
+
+
+## Natívne offline OCR
+
+Parser a lifecycle SDK sa testujú v `LocalReceiptParserTest` a `LocalReceiptOcrTest`.
+`LocalOcrScreenTest` a scan ViewModel regresie overujú výslovnú voľbu režimu,
+bezplatné čítanie pri nulovom kredite a žiadny cloudový fallback.
+Tieto fakes nenahrádzajú natívny model.
+
+CI job `native-ocr` najprv zostaví APK, potom spustí samostatný API30 AVD,
+vypne Wi-Fi/mobilné dáta a vykoná iba `LocalReceiptNativeOcrTest`:
+
+```sh
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=1 --no-parallel
+# Po spustení jediného vyhradeného AVD; nevypínaj sieť používateľovho telefónu:
+adb -e shell svc wifi disable
+adb -e shell svc data disable
+./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.example.data.LocalReceiptNativeOcrTest \
+  --no-daemon --max-workers=1 --no-parallel
+```
+
+Report je v artefakte `bleskova-faktura-native-ocr-reports`. Bez dostupného zariadenia
+alebo pri preskočenom/zlyhanom jobe je natívne rozpoznanie NOT VERIFIED.
+Obmedzenia a spracovanie dát sú v [OCR architektúre](architecture.md#lokalne-ocr).

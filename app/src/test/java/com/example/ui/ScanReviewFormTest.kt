@@ -18,6 +18,8 @@ import com.example.ui.screens.ReviewScannedInvoiceForm
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
+import androidx.compose.ui.semantics.SemanticsProperties
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -106,6 +108,33 @@ class ScanReviewFormTest {
         showReview(attempts, saving = true)
         composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("confirm_scanned_button"))
         composeRule.onNodeWithTag("confirm_scanned_button").assertIsNotEnabled()
+        composeRule.runOnIdle { assertTrue(attempts.isEmpty()) }
+    }
+
+
+    @Test
+    fun missingVat_staysUnknownThroughReviewAndSave() {
+        val attempts = mutableListOf<Invoice>()
+        showReview(attempts)
+        composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("scanned_vat_rate_input"))
+        assertEquals("", composeRule.onNodeWithTag("scanned_vat_rate_input").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        confirm()
+        composeRule.runOnIdle {
+            assertEquals(1, attempts.size)
+            assertNull(attempts.single().vatRate); assertNull(attempts.single().vatAmount)
+            assertNull(attempts.single().vatAmountCents)
+        }
+    }
+
+    @Test
+    fun vatRecalculation_rejectsOversizedAmountBeforeCentConversion() {
+        val attempts = mutableListOf<Invoice>()
+        showReview(attempts)
+        replace("scanned_amount_input", "1e100")
+        replace("scanned_vat_rate_input", "20")
+        composeRule.onNodeWithTag("review_scanned_form").performScrollToNode(hasTestTag("recalculate_scan_vat_button"))
+        composeRule.onNodeWithTag("recalculate_scan_vat_button").performClick()
+        composeRule.onNodeWithTag("scan_validation_error").assertExists()
         composeRule.runOnIdle { assertTrue(attempts.isEmpty()) }
     }
 

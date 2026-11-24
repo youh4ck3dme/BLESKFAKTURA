@@ -64,11 +64,50 @@ class InvoiceViewModelScanTest {
     private fun viewModel(
         repository: InvoiceDataGateway,
         extractor: InvoiceAiExtractor = InvoiceAiExtractor { AiExtractionResult.Success(data) },
-        archive: suspend (Bitmap, String) -> String? = { _, _ -> null }
+        archive: suspend (Bitmap, String) -> String? = { _, _ -> null },
+        local: InvoiceAiExtractor = InvoiceAiExtractor { AiExtractionResult.Success(data) }
     ): InvoiceViewModel = InvoiceViewModel(
         ApplicationProvider.getApplicationContext<Application>(), repository, FakeBillingGateway(),
-        extractor, archive, clearCredentialStateAction = {}
+        extractor, archive, clearCredentialStateAction = {}, localOcrExtractor = local
     ).also { store.put("viewModel", it) }
+
+
+    @Test
+    fun localOcrWithZeroCredits_doesNotCallCloudOrCreditLedger() = runTest(dispatcher) {
+        val repository = FakeInvoiceDataGateway(initialCredits = 0)
+        var localCalls = 0
+        val vm = viewModel(repository, extractor = InvoiceAiExtractor { error("Cloud must not be called") },
+            local = InvoiceAiExtractor { localCalls++; AiExtractionResult.Success(data) })
+        vm.scanInvoiceImage(bitmap, localOcr = true); runCurrent()
+        assertTrue(vm.scanState.value is ScanUiState.Success); assertEquals(1, localCalls)
+        assertEquals(0, repository.reserveCalls); assertEquals(0, repository.commitCalls)
+        assertEquals(0, repository.rollbackCalls); assertEquals(0, repository.currentStatsSnapshot().credits)
+    }
+
+    @Test
+    fun localOcrRejectionAndTimeout_neverFallBackToCloudOrInventRefund() = runTest(dispatcher) {
+        for (result in listOf(AiExtractionResult.InvalidDocument("Doklad nie je čitateľný."), AiExtractionResult.Timeout)) {
+            val repository = FakeInvoiceDataGateway(initialCredits = 0)
+            val vm = viewModel(repository, extractor = InvoiceAiExtractor { error("Cloud must not be called") },
+                local = InvoiceAiExtractor { result })
+            vm.scanInvoiceImage(bitmap, localOcr = true); runCurrent()
+            val state = vm.scanState.value as ScanUiState.Error
+            assertFalse(state.message.contains("Kredit bol")); assertFalse(state.message.contains("AI analýza"))
+            assertEquals(0, repository.reserveCalls); assertEquals(0, repository.rollbackCalls)
+        }
+    }
+
+    @Test
+    fun localOcrPendingDoubleTap_andCancellationDoNotStartCloudOrDebit() = runTest(dispatcher) {
+        val repository = FakeInvoiceDataGateway(initialCredits = 0)
+        val gate = CompletableDeferred<AiExtractionResult>(); var calls = 0
+        val vm = viewModel(repository, extractor = InvoiceAiExtractor { error("Cloud must not be called") },
+            local = InvoiceAiExtractor { calls++; gate.await() })
+        vm.scanInvoiceImage(bitmap, localOcr = true); runCurrent()
+        vm.scanInvoiceImage(bitmap, localOcr = true); runCurrent(); assertEquals(1, calls)
+        vm.startNewScan(); runCurrent(); gate.complete(AiExtractionResult.Success(data)); runCurrent()
+        assertEquals(ScanUiState.Idle, vm.scanState.value); assertEquals(0, repository.reserveCalls)
+    }
 
     @Test
     fun successfulScan_consumesExactlyOneCreditAndCommitsWithoutRefund() = runTest(dispatcher) {
