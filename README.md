@@ -65,3 +65,9 @@ bezplatnej prevádzky. Podrobnosti a neoverené časti patria do
 Do Git nepatria `google-services.json`, App Check tajomstvá, prihlasovacie údaje,
 keystores, APK/AAB ani súkromné doklady a logy. Pri údržbe zachovaj rozpracované
 používateľské zmeny a do commitu vyber iba skontrolované súbory.
+
+### Vzor eFaktúry 2027
+
+Na domovskej obrazovke zvoľte **eFaktúra 2027 · Pozrieť vzor**. Prehľad zobrazuje údaje z priloženého XML. Tlačidlom **Zobraziť XML** otvoríte celý pôvodný doklad aj bez pripojenia. Ide o všeobecný ilustračný príklad OpenPeppol s pôvodnými dátumami a sadzbami. Ukážka slúži na prezeranie a neodosiela doklady.
+
+Zdroj súboru: [OpenPeppol BIS Billing 3.0, Example files](https://docs.peppol.eu/poacc/billing/3.0/files/BIS-Billing3-Examples.zip), `rules/examples/base-example.xml`.

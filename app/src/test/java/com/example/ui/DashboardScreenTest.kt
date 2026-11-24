@@ -96,6 +96,37 @@ class DashboardScreenTest {
         return Triple(viewModel, fakeRepo, fakeBilling)
     }
 
+    private fun openEInvoiceExample() {
+        val (viewModel, _, _) = buildViewModel()
+        composeTestRule.setContent {
+            MyApplicationTheme { DashboardScreen(viewModel, {}, {}, {}, {}) }
+        }
+        composeTestRule.onNodeWithText("eFaktúra 2027 · Pozrieť vzor").assertIsDisplayed().performClick()
+    }
+
+    @Test
+    fun eInvoiceSmoke_opensReferenceInvoiceFromHome() {
+        openEInvoiceExample()
+        composeTestRule.onNodeWithText("Vzor eFaktúry").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Snippet1").assertIsDisplayed()
+        composeTestRule.onNodeWithText("1656.25 EUR").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun eInvoiceInteraction_switchesToExactXmlThenReturnsAndReopens() {
+        openEInvoiceExample()
+        composeTestRule.onNodeWithText("Zobraziť XML").performClick()
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val original = context.assets.open("efaktura/base-example.xml").bufferedReader().use { it.readText() }
+        composeTestRule.onNodeWithText(original).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Zobraziť prehľad").performClick()
+        composeTestRule.onNodeWithText("Snippet1").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Zavrieť").performClick()
+        composeTestRule.onNodeWithText("Vzor eFaktúry").assertDoesNotExist()
+        composeTestRule.onNodeWithText("eFaktúra 2027 · Pozrieť vzor").performClick()
+        composeTestRule.onNodeWithText("Snippet1").assertIsDisplayed()
+    }
+
     @Test
     fun kpiUnpaidTileAndChip_filterUnpaidInvoicesAndRestoreAll() {
         val (viewModel, _, _) = buildViewModel(pendingPurchases = 1)

@@ -311,7 +311,7 @@ fun DashboardScreen(
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {
                 item {
-                    Spacer(modifier = Modifier.height(6.dp))
+                    EInvoiceExampleEntry()
                 }
 
                 syncError?.let { errMsg ->
